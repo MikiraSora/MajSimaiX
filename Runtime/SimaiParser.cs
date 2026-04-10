@@ -1,6 +1,7 @@
 ﻿using MajSimai.Utils;
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -583,6 +584,9 @@ namespace MajSimai
             int signatureNumerator = 4;
             int signatureDenominator = 4;
             var curHSpeed = 1f;
+            var hsGroupSpeeds = new Dictionary<int, float>(); // 各组独立速度
+            var currentSoflanGroup = 0; // 当前音符所属变速组
+            var insideHsGroup = false; // 是否在 <HSg>(...) 的括号内
             double time = 0; //in seconds
             var beats = 4f; //{4}
             var haveNote = false;
@@ -812,21 +816,81 @@ namespace MajSimai
                                             Xcount++;
                                         }
                                         var hsContent = buffer.AsSpan(0, bufferIndex);
-                                        var isInvalid = hsContent.IsEmpty ||
-                                                        hsContent.Length < 4 ||
-                                                        hsContent[0] != 'H' ||
-                                                        hsContent[1] != 'S' ||
-                                                        tagIndex == -1;
-                                        if (isInvalid) // min: HS*1
+                                        if (hsContent.IsEmpty ||
+                                            hsContent.Length < 3 ||
+                                            hsContent[0] != 'H' ||
+                                            hsContent[1] != 'S')
                                         {
                                             throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
                                         }
-                                        var hsValue = hsContent[(tagIndex + 1)..]; // get "1.0" from HS*1.0
-                                        if (!float.TryParse(hsValue, out curHSpeed))
+
+                                        var hsBody = hsContent[2..]; // after "HS"
+                                        var hsGroupNum = 0;
+                                        var hasGroup = false;
+
+                                        if (tagIndex != -1)
                                         {
-                                            throw new InvalidSimaiMarkupException(Ycount, Xcount, hsContent.ToString(), "HSpeed value must be a number");
+                                            // Has '*': could be <HS*x> or <HSg*x>
+                                            var beforeStar = hsContent[2..tagIndex];
+                                            var afterStar = hsContent[(tagIndex + 1)..];
+
+                                            if (!beforeStar.IsEmpty)
+                                            {
+                                                // <HSg*x> format
+                                                if (!int.TryParse(beforeStar, out hsGroupNum) || hsGroupNum < 0)
+                                                {
+                                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "HS group number must be a non-negative integer");
+                                                }
+                                                hasGroup = true;
+                                            }
+
+                                            if (!float.TryParse(afterStar, out var hsValue))
+                                            {
+                                                throw new InvalidSimaiMarkupException(Ycount, Xcount, hsContent.ToString(), "HSpeed value must be a number");
+                                            }
+
+                                            if (hasGroup)
+                                            {
+                                                hsGroupSpeeds[hsGroupNum] = hsValue;
+                                            }
+                                            else
+                                            {
+                                                // <HS*x> - 旧语法，设置默认组速度
+                                                curHSpeed = hsValue;
+                                            }
                                         }
-                                        //Console.WriteLine("HS" + curHSpeed);
+                                        else
+                                        {
+                                            // No '*': must be <HSg> format (group only, no speed change)
+                                            if (!int.TryParse(hsBody, out hsGroupNum) || hsGroupNum <= 0)
+                                            {
+                                                throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
+                                            }
+                                            hasGroup = true;
+                                        }
+
+                                        // Check for group parentheses: <HSg*x>(...) or <HSg>(...)
+                                        if (hasGroup)
+                                        {
+                                            // Look ahead for '('
+                                            var nextIdx = i + 1;
+                                            while (nextIdx < fumen.Length && (fumen[nextIdx] == ' ' || fumen[nextIdx] == '\n'))
+                                            {
+                                                if (fumen[nextIdx] == '\n')
+                                                {
+                                                    Ycount++;
+                                                    Xcount = 0;
+                                                }
+                                                nextIdx++;
+                                            }
+                                            if (nextIdx < fumen.Length && fumen[nextIdx] == '(')
+                                            {
+                                                insideHsGroup = true;
+                                                currentSoflanGroup = hsGroupNum;
+                                                i = nextIdx; // skip to '('
+                                                Xcount++;
+                                            }
+                                        }
                                     }
                                     finally
                                     {
@@ -838,6 +902,30 @@ namespace MajSimai
                                     var s = fumen[i].ToString();
                                     throw new InvalidSimaiMarkupException(Ycount, Xcount, s, $"Unexpected character \"{s}\"");
                                 }
+                            }
+                            continue;
+                        case ')' when insideHsGroup:
+                            {
+                                // Exit HS group mode
+                                if (haveNote)
+                                {
+                                    var noteContent = (ReadOnlySpan<char>)(noteContentBuffer.AsSpan(0, noteContentBufIndex));
+                                    var groupHSpeed = hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var ghs) ? ghs : 1f;
+                                    var rawTp = new SimaiRawTimingPoint(time,
+                                                                        noteContent,
+                                                                        Xcount,
+                                                                        Ycount,
+                                                                        bpm,
+                                                                        groupHSpeed,
+                                                                        i,
+                                                                        currentSoflanGroup);
+                                    BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
+                                    noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
+                                    haveNote = false;
+                                    noteContentBufIndex = 0;
+                                }
+                                insideHsGroup = false;
+                                currentSoflanGroup = 0;
                             }
                             continue;
                     }
@@ -866,6 +954,9 @@ namespace MajSimai
                                     var fakeTime = time;
                                     var timeInterval = 1.875 / bpm; // 128分音
 
+                                    var fakeHSpeed = currentSoflanGroup != 0
+                                        ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var fghs) ? fghs : 1f)
+                                        : curHSpeed;
                                     for (var j = 0; j < tagCount; j++)
                                     {
                                         var fakeEachGroup = noteContent[ranges[j]];
@@ -875,8 +966,9 @@ namespace MajSimai
                                                                             Xcount,
                                                                             Ycount,
                                                                             bpm,
-                                                                            curHSpeed,
-                                                                            i);
+                                                                            fakeHSpeed,
+                                                                            i,
+                                                                            currentSoflanGroup);
                                         BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
                                         noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
                                         fakeTime += timeInterval;
@@ -889,13 +981,17 @@ namespace MajSimai
                             }
                             else
                             {
+                                var noteHSpeed = currentSoflanGroup != 0
+                                    ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var nghs) ? nghs : 1f)
+                                    : curHSpeed;
                                 var rawTp = new SimaiRawTimingPoint(time,
                                                                     noteContent,
                                                                     Xcount,
                                                                     Ycount,
                                                                     bpm,
-                                                                    curHSpeed,
-                                                                    i);
+                                                                    noteHSpeed,
+                                                                    i,
+                                                                    currentSoflanGroup);
                                 BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
                                 noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
                             }

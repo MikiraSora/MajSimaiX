@@ -18,14 +18,16 @@ namespace MajSimai
         public int SignatureDenominator { get; } = 4;
         public SimaiNote[] Notes { get; set; } = Array.Empty<SimaiNote>();
         public bool IsEmpty => Notes.Length == 0;
+        public int SoflanGroup { get; } = 0;
 
         public SimaiTimingPoint(double timing, SimaiNote[]? notes, ReadOnlySpan<char> rawContent, int textPosX = 0, int textPosY = 0, float bpm = 0f, 
-            float hspeed = 1f, int rawTextPosition = 0, int signatureNumerator = 0, int signatureDenominator = 0)
+            float hspeed = 1f, int rawTextPosition = 0, int signatureNumerator = 0, int signatureDenominator = 0, int soflanGroup = 0)
         {
             Timing = timing;
             RawTextPositionX = textPosX;
             RawTextPositionY = textPosY;
             RawTextPosition = rawTextPosition;
+            SoflanGroup = soflanGroup;
             if (!rawContent.IsEmpty)
             {
                 Span<char> rCSpan = stackalloc char[rawContent.Length];
