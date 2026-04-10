@@ -5,11 +5,11 @@
     <Nullable>enable</Nullable>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageId>Lingfeng-bbben.$(AssemblyName)</PackageId>
-    <Authors>bbben;Lezi;Moying</Authors>
+    <Authors>bbben;Lezi;Moying;MikiraSora</Authors>
     <Company>Majdata</Company>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
-    <Version>2.0.5</Version>
+    <Version>2.0.8</Version>
     <IsTrimmable>True</IsTrimmable>
     <IsAotCompatible>True</IsAotCompatible>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
