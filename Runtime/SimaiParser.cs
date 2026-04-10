@@ -259,7 +259,7 @@ namespace MajSimai
                     var range = ranges[i];
                     var maidataTxt = content[range].Trim();
                     var tagIndex = maidataTxt.IndexOf('=');
-                    if(maidataTxt.IsEmpty || maidataTxt[0] != '&')
+                    if (maidataTxt.IsEmpty || maidataTxt[0] != '&')
                     {
                         continue;
                     }
@@ -890,6 +890,22 @@ namespace MajSimai
                                                 i = nextIdx; // skip to '('
                                                 Xcount++;
                                             }
+                                            else
+                                            {
+                                                //没有括号,说明只是单纯的变速声明
+                                                var noteContent = string.Empty;
+                                                var groupHSpeed = hsGroupSpeeds.TryGetValue(hsGroupNum, out var ghs) ? ghs : 1f;
+                                                var rawTp = new SimaiRawTimingPoint(time,
+                                                                                    noteContent,
+                                                                                    Xcount,
+                                                                                    Ycount,
+                                                                                    bpm,
+                                                                                    groupHSpeed,
+                                                                                    i,
+                                                                                    hsGroupNum);
+                                                BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
+                                                noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
+                                            }
                                         }
                                     }
                                     finally
@@ -1018,7 +1034,7 @@ namespace MajSimai
 
                 BufferHelper.EnsureBufferLength(commaTimingBufIndex + 1, ref commaTimingBuffer);
                 commaTimingBuffer[commaTimingBufIndex++] = new SimaiTimingPoint(time, null, string.Empty, Xcount, Ycount, bpm, 1, fumen.Length, signatureNumerator, signatureDenominator);
-                
+
                 var noteTimingPoints = new SimaiTimingPoint[noteRawTimingBufIndex];
                 Parallel.For(0, noteRawTimingBufIndex, i =>
                 {
@@ -1027,10 +1043,10 @@ namespace MajSimai
                     noteTimingPoints[i] = timingPoint;
                 });
 
-                return new SimaiChart(level, 
-                                      designer, 
-                                      fumen.ToString(), 
-                                      noteTimingPoints.AsSpan(0, noteRawTimingBufIndex), 
+                return new SimaiChart(level,
+                                      designer,
+                                      fumen.ToString(),
+                                      noteTimingPoints.AsSpan(0, noteRawTimingBufIndex),
                                       commaTimingBuffer.AsSpan(0, commaTimingBufIndex));
             }
             catch (InvalidSimaiMarkupException)

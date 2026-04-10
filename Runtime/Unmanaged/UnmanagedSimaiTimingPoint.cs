@@ -20,6 +20,7 @@ internal unsafe struct UnmanagedSimaiTimingPoint
     public int notesLen;
     public int rawContentLen;
     public bool isEmpty;
+    public int soflanGroup;
 
     public UnmanagedSimaiNote* notes;
     public char* rawContent;

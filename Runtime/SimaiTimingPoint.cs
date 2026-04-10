@@ -20,7 +20,7 @@ namespace MajSimai
         public bool IsEmpty => Notes.Length == 0;
         public int SoflanGroup { get; } = 0;
 
-        public SimaiTimingPoint(double timing, SimaiNote[]? notes, ReadOnlySpan<char> rawContent, int textPosX = 0, int textPosY = 0, float bpm = 0f, 
+        public SimaiTimingPoint(double timing, SimaiNote[]? notes, ReadOnlySpan<char> rawContent, int textPosX = 0, int textPosY = 0, float bpm = 0f,
             float hspeed = 1f, int rawTextPosition = 0, int signatureNumerator = 0, int signatureDenominator = 0, int soflanGroup = 0)
         {
             Timing = timing;
@@ -97,6 +97,7 @@ namespace MajSimai
                 rawTextPosition = RawTextPosition,
                 rawContent = rawContentPtr,
                 rawContentLen = RawContent.Length,
+                soflanGroup = SoflanGroup,
                 notes = noteArray,
                 notesLen = Notes.Length
             };
