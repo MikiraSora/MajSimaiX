@@ -419,17 +419,17 @@ namespace MajSimai
                             break;
                     }
                 }
-                if (!string.IsNullOrEmpty(designer))
-                {
-                    for (var j = 0; j < 7; j++)
-                    {
-                        ref var d = ref designers[j];
-                        if (string.IsNullOrEmpty(d))
-                        {
-                            d = designer;
-                        }
-                    }
-                }
+                //if (!string.IsNullOrEmpty(designer))
+                //{
+                //    for (var j = 0; j < 7; j++)
+                //    {
+                //        ref var d = ref designers[j];
+                //        if (string.IsNullOrEmpty(d))
+                //        {
+                //            d = designer;
+                //        }
+                //    }
+                //}
                 var encoding = Encoding.UTF8;
                 var byteCount = encoding.GetByteCount(content);
                 var bytes = new byte[byteCount];
@@ -1164,11 +1164,11 @@ namespace MajSimai
                   .Append('=')
                   .Append(chart)
                   .AppendLine();
-                if (!chart.EndsWith('E'))
-                {
-                    sb.Append('E')
-                      .AppendLine();
-                }
+                //if (!chart.EndsWith('E'))
+                //{
+                //    sb.Append('E')
+                //      .AppendLine();
+                //}
             }
             return sb.ToString();
         }
