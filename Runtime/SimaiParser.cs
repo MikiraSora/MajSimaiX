@@ -44,7 +44,7 @@ namespace MajSimai
                     var level = metadata.Levels[i];
                     try
                     {
-                        rentedArrayForCharts[i] = ParseChart(level, designer, fumen);
+                        rentedArrayForCharts[i] = ParseChart(level, designer, fumen, default, out _);
                     }
                     catch (Exception ex)
                     {
@@ -547,9 +547,9 @@ namespace MajSimai
         /// <param name="fumen">Simai chart</param>
         /// <returns></returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static SimaiChart ParseChart(ReadOnlySpan<char> fumen)
+        public static SimaiChart ParseChart(ReadOnlySpan<char> fumen, long position, out double requestTime)
         {
-            return ParseChart(string.Empty, string.Empty, fumen);
+            return ParseChart(string.Empty, string.Empty, fumen, position, out requestTime);
         }
         /// <summary>
         /// Read simai chart from <paramref name="fumen"/> and parse it into <seealso cref="SimaiChart"/>
@@ -558,8 +558,9 @@ namespace MajSimai
         /// <param name="designer">designer of simai chart</param>
         /// <param name="fumen">Simai chart</param>
         /// <returns></returns>
-        public static SimaiChart ParseChart(string level, string designer, ReadOnlySpan<char> fumen)
+        public static SimaiChart ParseChart(string level, string designer, ReadOnlySpan<char> fumen, long position, out double requestTime)
         {
+            requestTime = default;
             static bool IsNote(char c)
             {
                 var isTapOrHoldOrSlide = c >= '0' && c <= '9';
@@ -615,6 +616,10 @@ namespace MajSimai
                     {
                         Xcount++;
                     }
+
+                    if (i - 1 < position) 
+                        requestTime = time;
+
                     switch (fumen[i])
                     {
                         case '|': // 跳过注释
@@ -1071,7 +1076,7 @@ namespace MajSimai
         /// <returns></returns>
         public static Task<SimaiChart> ParseChartAsync(string fumen)
         {
-            return Task.Run(() => ParseChart(string.Empty, string.Empty, fumen));
+            return Task.Run(() => ParseChart(string.Empty, string.Empty, fumen, default, out _));
         }
         /// <summary>
         /// Read simai chart from <paramref name="fumen"/> and parse it into <seealso cref="SimaiChart"/>
@@ -1080,7 +1085,7 @@ namespace MajSimai
         /// <returns></returns>
         public static Task<SimaiChart> ParseChartAsync(ReadOnlyMemory<char> fumen)
         {
-            return Task.Run(() => ParseChart(string.Empty, string.Empty, fumen.Span));
+            return Task.Run(() => ParseChart(string.Empty, string.Empty, fumen.Span, default, out _));
         }
         /// <summary>
         /// Read simai chart from <paramref name="fumen"/> and parse it into <seealso cref="SimaiChart"/>
@@ -1091,7 +1096,7 @@ namespace MajSimai
         /// <returns></returns>
         public static Task<SimaiChart> ParseChartAsync(string level, string designer, ReadOnlyMemory<char> fumen)
         {
-            return Task.Run(() => ParseChart(level, designer, fumen.Span));
+            return Task.Run(() => ParseChart(level, designer, fumen.Span, default, out _));
         }
         /// <summary>
         /// Read simai chart from <paramref name="fumen"/> and parse it into <seealso cref="SimaiChart"/>
@@ -1102,7 +1107,7 @@ namespace MajSimai
         /// <returns></returns>
         public static Task<SimaiChart> ParseChartAsync(string level, string designer, string fumen)
         {
-            return Task.Run(() => ParseChart(level, designer, fumen));
+            return Task.Run(() => ParseChart(level, designer, fumen, default, out _));
         }
         #endregion
         #region Deparse
