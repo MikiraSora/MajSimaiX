@@ -593,7 +593,29 @@ namespace MajSimai
             var haveNote = false;
             //var noteTemp = "";
 
-            int Ycount = 1, Xcount = 0;
+            var cachedLineOffsetList = new List<int>();
+            for (int i = 0; i < fumen.Length; i++)
+            {
+                if (fumen[i] == '\n')
+                    cachedLineOffsetList.Add(i);
+            }
+
+            void getTextPosition(int offset, out int xCount, out int yCount)
+            {
+                yCount = 1;
+                var lastLineOffsetBase = 0;
+
+                foreach (var curLineOffsetBase in cachedLineOffsetList)
+                {
+                    if (offset < curLineOffsetBase)
+                        break;
+
+                    yCount++;
+                    lastLineOffsetBase = curLineOffsetBase;
+                }
+
+                xCount = offset - lastLineOffsetBase;
+            }
 
             /// Xcount| 1 2 3 4 5 6 7 8 9 10| 
             /// --------------------------------
@@ -606,18 +628,7 @@ namespace MajSimai
             {
                 for (var i = 0; i < fumen.Length; i++)
                 {
-                    if (fumen[i] == '\n')
-                    {
-                        Ycount++;
-                        Xcount = 0;
-                        continue;
-                    }
-                    else
-                    {
-                        Xcount++;
-                    }
-
-                    if (i - 1 < position) 
+                    if (i - 1 < position)
                         requestTime = time;
 
                     switch (fumen[i])
@@ -628,22 +639,15 @@ namespace MajSimai
                                 if (str.Length >= 2 && str[1] == '|')
                                 {
                                     i += 2;
-                                    Xcount += 2;
 
                                     if (str.Length >= 6 && fumen[i] == 's') // ||sx/x
                                     {
                                         var startAt = i + 1;
                                         i++;
-                                        Xcount++;
                                         for (; i < fumen.Length; i++)
                                         {
                                             if (fumen[i] == '\n')
-                                            {
-                                                Ycount++;
-                                                Xcount = 0;
                                                 break;
-                                            }
-                                            Xcount++;
                                         }
                                         var endAt = i;
                                         var signatureStr = fumen[startAt..endAt].Trim();
@@ -665,18 +669,14 @@ namespace MajSimai
                                         for (; i < fumen.Length; i++)
                                         {
                                             if (fumen[i] == '\n')
-                                            {
-                                                Ycount++;
-                                                Xcount = 0;
                                                 break;
-                                            }
-                                            Xcount++;
                                         }
                                     }
                                 }
                                 else
                                 {
                                     var s = fumen[i].ToString();
+                                    getTextPosition(i, out var Xcount, out var Ycount);
                                     throw new InvalidSimaiMarkupException(Ycount, Xcount, s, $"Unexpected character \"{s}\"");
                                 }
                             }
@@ -691,32 +691,26 @@ namespace MajSimai
                                 {
                                     var startAt = i + 1;
                                     i++;
-                                    Xcount++;
                                     for (; i < fumen.Length; i++)
                                     {
                                         if (fumen[i] == '\n')
-                                        {
-                                            Ycount++;
-                                            Xcount = 0;
                                             continue;
-                                        }
                                         else if (fumen[i] == ')')
-                                        {
                                             break;
-                                        }
-                                        Xcount++;
                                     }
                                     var endAt = i;
                                     var bpmStr = fumen[startAt..endAt].Trim();
 
                                     if (!float.TryParse(bpmStr, out bpm))
                                     {
+                                        getTextPosition(i, out var Xcount, out var Ycount);
                                         throw new InvalidSimaiSyntaxException(Ycount, Xcount, bpmStr.ToString(), "BPM value must be a number");
                                     }
                                 }
                                 else
                                 {
                                     var s = fumen[i].ToString();
+                                    getTextPosition(i, out var Xcount, out var Ycount);
                                     throw new InvalidSimaiMarkupException(Ycount, Xcount, s, $"Unexpected character \"{s}\"");
                                 }
                                 //Console.WriteLine("BPM" + bpm);
@@ -732,44 +726,44 @@ namespace MajSimai
                                 {
                                     var startAt = i + 1;
                                     i++;
-                                    Xcount++;
                                     for (; i < fumen.Length; i++)
                                     {
                                         if (fumen[i] == '\n')
                                         {
-                                            Ycount++;
-                                            Xcount = 0;
                                             continue;
                                         }
                                         else if (fumen[i] == '}')
                                         {
                                             break;
                                         }
-                                        Xcount++;
                                     }
                                     var endAt = i;
                                     var beatsStr = fumen[startAt..endAt].Trim();
 
                                     if (beatsStr.IsEmpty)
                                     {
+                                        getTextPosition(i, out var Xcount, out var Ycount);
                                         throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[startAt..endAt].ToString(), "Beats value must be a number");
                                     }
                                     else if (beatsStr[0] == '#')
                                     {
                                         if (!float.TryParse(beatsStr[1..], out var beatInterval))
                                         {
+                                            getTextPosition(i, out var Xcount, out var Ycount);
                                             throw new InvalidSimaiSyntaxException(Ycount, Xcount, beatsStr.ToString(), "Beats value must be a number");
                                         }
                                         beats = 240f / (bpm * beatInterval);
                                     }
                                     else if (!float.TryParse(beatsStr, out beats))
                                     {
+                                        getTextPosition(i, out var Xcount, out var Ycount);
                                         throw new InvalidSimaiSyntaxException(Ycount, Xcount, beatsStr.ToString(), "Beats value must be a number");
                                     }
                                 }
                                 else
                                 {
                                     var s = fumen[i].ToString();
+                                    getTextPosition(i, out var Xcount, out var Ycount);
                                     throw new InvalidSimaiMarkupException(Ycount, Xcount, s, $"Unexpected character \"{s}\"");
                                 }
                                 //Console.WriteLine("BEAT" + beats);
@@ -792,7 +786,6 @@ namespace MajSimai
                                     var bufferIndex = 0;
                                     var tagIndex = -1; // position of '*'
                                     i++;
-                                    Xcount++;
                                     try
                                     {
                                         for (; i < fumen.Length; i++)
@@ -800,14 +793,13 @@ namespace MajSimai
                                             ref readonly var currentChar = ref fumen[i];
                                             if (currentChar == '\n')
                                             {
-                                                Ycount++;
-                                                Xcount = 0;
                                                 continue;
                                             }
                                             else if (currentChar == '*')
                                             {
                                                 if (tagIndex != -1)
                                                 {
+                                                    getTextPosition(i, out var Xcount, out var Ycount);
                                                     throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[(startAt - 1)..(i + 1)].ToString(), "Unexpected HS declaration syntax");
                                                 }
                                                 tagIndex = bufferIndex;
@@ -818,7 +810,6 @@ namespace MajSimai
                                             }
                                             BufferHelper.EnsureBufferLength(bufferIndex + 1, ref buffer);
                                             buffer[bufferIndex++] = currentChar;
-                                            Xcount++;
                                         }
                                         var hsContent = buffer.AsSpan(0, bufferIndex);
                                         if (hsContent.IsEmpty ||
@@ -826,6 +817,7 @@ namespace MajSimai
                                             hsContent[0] != 'H' ||
                                             hsContent[1] != 'S')
                                         {
+                                            getTextPosition(i, out var Xcount, out var Ycount);
                                             throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
                                         }
 
@@ -844,6 +836,7 @@ namespace MajSimai
                                                 // <HSg*x> format
                                                 if (!int.TryParse(beforeStar, out hsGroupNum) || hsGroupNum < 0)
                                                 {
+                                                    getTextPosition(i, out var Xcount, out var Ycount);
                                                     throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "HS group number must be a non-negative integer");
                                                 }
                                                 hasGroup = true;
@@ -851,6 +844,7 @@ namespace MajSimai
 
                                             if (!float.TryParse(afterStar, out var hsValue))
                                             {
+                                                getTextPosition(i, out var Xcount, out var Ycount);
                                                 throw new InvalidSimaiMarkupException(Ycount, Xcount, hsContent.ToString(), "HSpeed value must be a number");
                                             }
 
@@ -869,6 +863,7 @@ namespace MajSimai
                                             // No '*': must be <HSg> format (group only, no speed change)
                                             if (!int.TryParse(hsBody, out hsGroupNum) || hsGroupNum <= 0)
                                             {
+                                                getTextPosition(i, out var Xcount, out var Ycount);
                                                 throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
                                             }
                                             hasGroup = true;
@@ -881,11 +876,6 @@ namespace MajSimai
                                             var nextIdx = i + 1;
                                             while (nextIdx < fumen.Length && (fumen[nextIdx] == ' ' || fumen[nextIdx] == '\n'))
                                             {
-                                                if (fumen[nextIdx] == '\n')
-                                                {
-                                                    Ycount++;
-                                                    Xcount = 0;
-                                                }
                                                 nextIdx++;
                                             }
                                             if (nextIdx < fumen.Length && fumen[nextIdx] == '(')
@@ -893,13 +883,13 @@ namespace MajSimai
                                                 insideHsGroup = true;
                                                 currentSoflanGroup = hsGroupNum;
                                                 i = nextIdx; // skip to '('
-                                                Xcount++;
                                             }
                                             else
                                             {
                                                 //没有括号,说明只是单纯的变速声明
                                                 var noteContent = string.Empty;
                                                 var groupHSpeed = hsGroupSpeeds.TryGetValue(hsGroupNum, out var ghs) ? ghs : 1f;
+                                                getTextPosition(i, out var Xcount, out var Ycount);
                                                 var rawTp = new SimaiRawTimingPoint(time,
                                                                                     noteContent,
                                                                                     Xcount,
@@ -921,6 +911,7 @@ namespace MajSimai
                                 else
                                 {
                                     var s = fumen[i].ToString();
+                                    getTextPosition(i, out var Xcount, out var Ycount);
                                     throw new InvalidSimaiMarkupException(Ycount, Xcount, s, $"Unexpected character \"{s}\"");
                                 }
                             }
@@ -932,6 +923,7 @@ namespace MajSimai
                                 {
                                     var noteContent = (ReadOnlySpan<char>)(noteContentBuffer.AsSpan(0, noteContentBufIndex));
                                     var groupHSpeed = hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var ghs) ? ghs : 1f;
+                                    getTextPosition(i, out var Xcount, out var Ycount);
                                     var rawTp = new SimaiRawTimingPoint(time,
                                                                         noteContent,
                                                                         Xcount,
@@ -982,6 +974,7 @@ namespace MajSimai
                                     {
                                         var fakeEachGroup = noteContent[ranges[j]];
                                         //Console.WriteLine(fakeEachGroup.ToString());
+                                        getTextPosition(i, out var Xcount, out var Ycount);
                                         var rawTp = new SimaiRawTimingPoint(fakeTime,
                                                                             fakeEachGroup,
                                                                             Xcount,
@@ -1005,6 +998,7 @@ namespace MajSimai
                                 var noteHSpeed = currentSoflanGroup != 0
                                     ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var nghs) ? nghs : 1f)
                                     : curHSpeed;
+                                getTextPosition(i, out var Xcount, out var Ycount);
                                 var rawTp = new SimaiRawTimingPoint(time,
                                                                     noteContent,
                                                                     Xcount,
@@ -1021,9 +1015,11 @@ namespace MajSimai
                             //noteTemp = "";
                             noteContentBufIndex = 0;
                         }
-                        BufferHelper.EnsureBufferLength(commaTimingBufIndex + 1, ref commaTimingBuffer);
-                        commaTimingBuffer[commaTimingBufIndex++] = new SimaiTimingPoint(time, null, string.Empty, Xcount, Ycount, bpm, 1, i, signatureNumerator, signatureDenominator);
-
+                        {
+                            BufferHelper.EnsureBufferLength(commaTimingBufIndex + 1, ref commaTimingBuffer);
+                            getTextPosition(i, out var Xcount, out var Ycount);
+                            commaTimingBuffer[commaTimingBufIndex++] = new SimaiTimingPoint(time, null, string.Empty, Xcount, Ycount, bpm, 1, i, signatureNumerator, signatureDenominator);
+                        }
                         time += 1d / (bpm / 60d) * 4d / beats;
                         //Console.WriteLine(time);
                         haveNote = false;
@@ -1036,9 +1032,9 @@ namespace MajSimai
                         noteContentBuffer[noteContentBufIndex++] = curChar;
                     }
                 }
-
                 BufferHelper.EnsureBufferLength(commaTimingBufIndex + 1, ref commaTimingBuffer);
-                commaTimingBuffer[commaTimingBufIndex++] = new SimaiTimingPoint(time, null, string.Empty, Xcount, Ycount, bpm, 1, fumen.Length, signatureNumerator, signatureDenominator);
+                getTextPosition(fumen.Length, out var endXcount, out var endYcount);
+                commaTimingBuffer[commaTimingBufIndex++] = new SimaiTimingPoint(time, null, string.Empty, endXcount, endYcount, bpm, 1, fumen.Length, signatureNumerator, signatureDenominator);
 
                 var noteTimingPoints = new SimaiTimingPoint[noteRawTimingBufIndex];
                 Parallel.For(0, noteRawTimingBufIndex, i =>
@@ -1060,7 +1056,7 @@ namespace MajSimai
             }
             catch (Exception e)
             {
-                throw new Exception("Error at " + Ycount + "," + Xcount + "\n" + e.Message);
+                throw new Exception("Error " + e.Message);
             }
             finally
             {
