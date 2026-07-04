@@ -869,11 +869,39 @@ namespace MajSimai
                                             hasGroup = true;
                                         }
 
+                                        // Look ahead for '`' after > immediatly
+                                        var nextIdx = i + 1;
+                                        while (nextIdx < fumen.Length && (fumen[nextIdx] == ' ' || fumen[nextIdx] == '\n'))
+                                        {
+                                            nextIdx++;
+                                        }
+                                        if (nextIdx < fumen.Length && fumen[nextIdx] == '`')
+                                        {
+                                            i = nextIdx; // skip to '`'
+                                            /*
+                                            getTextPosition(i, out var Xcount, out var Ycount);
+                                            var groupHSpeed = hsGroupSpeeds.TryGetValue(hsGroupNum, out var ghs) ? ghs : 1f;
+
+                                            var earlyTime = time - 0.01f;
+
+                                            var rawTp = new SimaiRawTimingPoint(earlyTime,
+                                                                                    null,
+                                                                                    Xcount,
+                                                                                    Ycount,
+                                                                                    bpm,
+                                                                                    groupHSpeed,
+                                                                                    i,
+                                                                                    hsGroupNum);
+                                            BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
+                                            noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
+                                            */
+                                        }
+
                                         // Check for group parentheses: <HSg*x>(...) or <HSg>(...)
                                         if (hasGroup)
                                         {
                                             // Look ahead for '('
-                                            var nextIdx = i + 1;
+                                            nextIdx = i + 1;
                                             while (nextIdx < fumen.Length && (fumen[nextIdx] == ' ' || fumen[nextIdx] == '\n'))
                                             {
                                                 nextIdx++;
