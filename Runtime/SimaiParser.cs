@@ -682,29 +682,56 @@ namespace MajSimai
             }
 
             void addHSpeedInterpolation(int soflanGroup,
-                                        float targetHSpeed,
-                                        double duration,
+                                        List<HSpeedSegment> segments,
                                         int textPosX,
                                         int textPosY,
                                         int textPos)
             {
-                if (duration <= 0)
+                if (segments.Count == 0)
                 {
-                    throw new InvalidSimaiSyntaxException(textPosY, textPosX, "<HS>", "HS interpolation duration must be greater than zero");
+                    throw new InvalidSimaiSyntaxException(textPosY, textPosX, "<HS>", "HSpeed chain interpolation requires at least one segment");
                 }
                 if (bpm <= 0)
                 {
                     throw new InvalidSimaiSyntaxException(textPosY, textPosX, "<HS>", "HS interpolation requires a valid BPM");
                 }
+                var totalDuration = 0d;
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    if (segments[i].Duration <= 0)
+                    {
+                        throw new InvalidSimaiSyntaxException(textPosY, textPosX, "<HS>", "HS interpolation duration must be greater than zero");
+                    }
+                    totalDuration += segments[i].Duration;
+                }
 
                 var endTime = time;
-                var startTime = endTime - duration;
+                var startTime = endTime - totalDuration;
                 var startHSpeed = GetEffectiveHSpeed(hSpeedEvents, soflanGroup, startTime);
                 removeHSpeedEventsInRange(soflanGroup, startTime, endTime);
 
                 var gridSeconds = 60d / bpm / 384d;
                 var stepSeconds = gridSeconds * hSpeedInterpolationGrid;
                 var sampleTimes = new List<double>();
+                var segmentStartTime = startTime;
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    if (!IsAfterTime(segmentStartTime, 0d))
+                    {
+                        AddUniqueTime(sampleTimes, 0d);
+                    }
+                    else
+                    {
+                        AddUniqueTime(sampleTimes, segmentStartTime);
+                    }
+
+                    segmentStartTime += segments[i].Duration;
+                    if (!IsAfterTime(segmentStartTime, 0d))
+                    {
+                        continue;
+                    }
+                    AddUniqueTime(sampleTimes, segmentStartTime);
+                }
 
                 if (startTime >= 0)
                 {
@@ -734,7 +761,32 @@ namespace MajSimai
 
                 foreach (var sampleTime in sampleTimes)
                 {
-                    var progress = (sampleTime - startTime) / duration;
+                    var hspeed = GetInterpolatedHSpeedAt(segments, startHSpeed, startTime, sampleTime);
+                    if (IsSameTime(sampleTime, endTime))
+                    {
+                        hspeed = segments[segments.Count - 1].TargetHSpeed;
+                    }
+
+                    addHSpeedRawTiming(sampleTime, textPosX, textPosY, bpm, hspeed, textPos, soflanGroup, nextTimingOrder());
+                }
+            }
+
+            static float GetInterpolatedHSpeedAt(List<HSpeedSegment> segments, float startHSpeed, double startTime, double sampleTime)
+            {
+                var segmentStartTime = startTime;
+                var segmentStartHSpeed = startHSpeed;
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var segment = segments[i];
+                    var segmentEndTime = segmentStartTime + segment.Duration;
+                    if (IsAfterTime(sampleTime, segmentEndTime) && i < segments.Count - 1)
+                    {
+                        segmentStartTime = segmentEndTime;
+                        segmentStartHSpeed = segment.TargetHSpeed;
+                        continue;
+                    }
+
+                    var progress = (sampleTime - segmentStartTime) / segment.Duration;
                     if (progress < 0)
                     {
                         progress = 0;
@@ -743,18 +795,20 @@ namespace MajSimai
                     {
                         progress = 1;
                     }
-                    var hspeed = (float)(startHSpeed + (targetHSpeed - startHSpeed) * progress);
-                    if (IsSameTime(sampleTime, endTime))
+                    var hspeed = (float)(segmentStartHSpeed + (segment.TargetHSpeed - segmentStartHSpeed) * progress);
+                    if (IsSameTime(sampleTime, segmentStartTime))
                     {
-                        hspeed = targetHSpeed;
+                        hspeed = segmentStartHSpeed;
                     }
-                    else if (IsSameTime(sampleTime, startTime))
+                    else if (IsSameTime(sampleTime, segmentEndTime))
                     {
-                        hspeed = startHSpeed;
+                        hspeed = segment.TargetHSpeed;
                     }
+                    return hspeed;
 
-                    addHSpeedRawTiming(sampleTime, textPosX, textPosY, bpm, hspeed, textPos, soflanGroup, nextTimingOrder());
                 }
+
+                return segments[segments.Count - 1].TargetHSpeed;
             }
 
             /// Xcount| 1 2 3 4 5 6 7 8 9 10| 
@@ -970,10 +1024,10 @@ namespace MajSimai
                                         var hsGroupNum = 0;
                                         var hasGroup = false;
                                         var hasHSpeedChange = false;
+                                        var hSpeedSegments = new List<HSpeedSegment>();
                                         var hasInterpolation = false;
                                         var commandOrder = nextTimingOrder();
                                         var hsValue = 1f;
-                                        var interpolationDuration = 0d;
 
                                         if (tagIndex != -1)
                                         {
@@ -992,33 +1046,19 @@ namespace MajSimai
                                                 hasGroup = true;
                                             }
 
-                                            var durationStart = afterStar.IndexOf('[');
-                                            var hSpeedValueBody = afterStar;
-                                            if (durationStart != -1)
-                                            {
-                                                var durationEnd = afterStar.IndexOf(']');
-                                                if (durationEnd == -1 ||
-                                                    durationEnd != afterStar.Length - 1 ||
-                                                    durationStart == 0)
-                                                {
-                                                    getTextPosition(i, out var Xcount, out var Ycount);
-                                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
-                                                }
-
-                                                hSpeedValueBody = afterStar[..durationStart].Trim();
-                                                var durationBody = afterStar[(durationStart + 1)..durationEnd].Trim();
-                                                if (!TryGetHsDuration(bpm, durationBody, out interpolationDuration))
-                                                {
-                                                    getTextPosition(i, out var Xcount, out var Ycount);
-                                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
-                                                }
-                                                hasInterpolation = true;
-                                            }
-
-                                            if (!float.TryParse(hSpeedValueBody, out hsValue))
+                                            if (!TryParseHSpeedValue(bpm,
+                                                                     afterStar,
+                                                                     hSpeedSegments,
+                                                                     out hsValue,
+                                                                     out hasInterpolation,
+                                                                     out var parseError))
                                             {
                                                 getTextPosition(i, out var Xcount, out var Ycount);
-                                                throw new InvalidSimaiMarkupException(Ycount, Xcount, hsContent.ToString(), "HSpeed value must be a number");
+                                                if (parseError == HSpeedValueParseError.InvalidHSpeed)
+                                                {
+                                                    throw new InvalidSimaiMarkupException(Ycount, Xcount, hsContent.ToString(), "HSpeed value must be a number");
+                                                }
+                                                throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
                                             }
                                             hasHSpeedChange = true;
 
@@ -1035,7 +1075,7 @@ namespace MajSimai
                                             if (hasInterpolation)
                                             {
                                                 getTextPosition(i, out var Xcount, out var Ycount);
-                                                addHSpeedInterpolation(hsGroupNum, hsValue, interpolationDuration, Xcount, Ycount, i);
+                                                addHSpeedInterpolation(hsGroupNum, hSpeedSegments, Xcount, Ycount, i);
                                             }
                                             else
                                             {
@@ -1471,6 +1511,135 @@ namespace MajSimai
             }
         }
 
+        static bool TryParseHSpeedValue(double bpm,
+                                        ReadOnlySpan<char> body,
+                                        List<HSpeedSegment> segments,
+                                        out float hspeed,
+                                        out bool hasInterpolation,
+                                        out HSpeedValueParseError parseError)
+        {
+            hspeed = default;
+            hasInterpolation = false;
+            parseError = HSpeedValueParseError.None;
+            segments.Clear();
+            body = body.Trim();
+            if (body.IsEmpty)
+            {
+                parseError = HSpeedValueParseError.Syntax;
+                return false;
+            }
+
+            if (body.IndexOf('~') == -1)
+            {
+                if (TryParseHSpeedSegment(bpm, body, out var segment, out var segmentError))
+                {
+                    segments.Add(segment);
+                    hspeed = segment.TargetHSpeed;
+                    hasInterpolation = true;
+                    return true;
+                }
+
+                if (body.IndexOf('[') == -1 && body.IndexOf(']') == -1)
+                {
+                    if (float.TryParse(body, out hspeed))
+                    {
+                        return true;
+                    }
+                    parseError = HSpeedValueParseError.InvalidHSpeed;
+                    return false;
+                }
+
+                parseError = segmentError;
+                return false;
+            }
+
+            if (body[0] == '~' || body[body.Length - 1] == '~')
+            {
+                parseError = HSpeedValueParseError.Syntax;
+                return false;
+            }
+
+            var segmentStart = 0;
+            while (segmentStart < body.Length)
+            {
+                var separatorIndex = body[segmentStart..].IndexOf('~');
+                ReadOnlySpan<char> segmentBody;
+                if (separatorIndex == -1)
+                {
+                    segmentBody = body[segmentStart..];
+                    segmentStart = body.Length + 1;
+                }
+                else
+                {
+                    segmentBody = body.Slice(segmentStart, separatorIndex);
+                    segmentStart += separatorIndex + 1;
+                }
+
+                if (!TryParseHSpeedSegment(bpm, segmentBody, out var segment, out var segmentError))
+                {
+                    segments.Clear();
+                    parseError = segmentError;
+                    return false;
+                }
+                segments.Add(segment);
+            }
+
+            if (segments.Count == 0)
+            {
+                parseError = HSpeedValueParseError.Syntax;
+                return false;
+            }
+
+            hspeed = segments[segments.Count - 1].TargetHSpeed;
+            hasInterpolation = true;
+            return true;
+        }
+
+        static bool TryParseHSpeedSegment(double bpm,
+                                          ReadOnlySpan<char> body,
+                                          out HSpeedSegment segment,
+                                          out HSpeedValueParseError parseError)
+        {
+            segment = default;
+            parseError = HSpeedValueParseError.None;
+            body = body.Trim();
+            if (body.IsEmpty)
+            {
+                parseError = HSpeedValueParseError.Syntax;
+                return false;
+            }
+
+            var durationStart = body.IndexOf('[');
+            var durationEnd = body.IndexOf(']');
+            if (durationStart <= 0 ||
+                durationEnd == -1 ||
+                durationEnd != body.Length - 1 ||
+                body[(durationEnd + 1)..].IndexOf(']') != -1)
+            {
+                parseError = HSpeedValueParseError.Syntax;
+                return false;
+            }
+
+            var hSpeedValueBody = body[..durationStart].Trim();
+            var durationBody = body[(durationStart + 1)..durationEnd].Trim();
+            if (hSpeedValueBody.IsEmpty ||
+                !TryGetHsDuration(bpm, durationBody, out var duration) ||
+                duration <= 0)
+            {
+                parseError = HSpeedValueParseError.Syntax;
+                return false;
+            }
+
+            if (!float.TryParse(hSpeedValueBody, out var hspeed))
+            {
+                parseError = HSpeedValueParseError.InvalidHSpeed;
+                return false;
+            }
+
+            segment = new HSpeedSegment(hspeed, duration);
+            return true;
+        }
+
         static bool TryGetTimeFromRatio(double bpm, ReadOnlySpan<char> ratioBody, out double time)
         {
             time = default;
@@ -1659,6 +1828,25 @@ namespace MajSimai
                 SoflanGroup = soflanGroup;
                 HSpeed = hspeed;
                 Order = order;
+            }
+        }
+
+        enum HSpeedValueParseError
+        {
+            None,
+            Syntax,
+            InvalidHSpeed
+        }
+
+        readonly struct HSpeedSegment
+        {
+            public float TargetHSpeed { get; }
+            public double Duration { get; }
+
+            public HSpeedSegment(float targetHSpeed, double duration)
+            {
+                TargetHSpeed = targetHSpeed;
+                Duration = duration;
             }
         }
 
