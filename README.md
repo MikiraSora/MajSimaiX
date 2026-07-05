@@ -70,6 +70,10 @@ MajSimai is an interpreter for [Simai](https://w.atwiki.jp/simai/), written in [
     - [x] With custom BPM `[float#int:int]`
 - [x] Each note `note/note`
   - [x] Fake each ``1`2`3`4,``
+- [x] HSpeed / Soflan
+  - [x] Global `<HS*float>`
+  - [x] Grouped `<HSg*float>` and `<HSg>(...)`
+  - [x] Linear interpolation `<HS*float[duration]>` and `<HSg*float[duration]>`
 - [ ] EOF flag `E`
 
 ## Getting Started

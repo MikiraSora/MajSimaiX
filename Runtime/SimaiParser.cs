@@ -1,4 +1,4 @@
-﻿using MajSimai.Utils;
+using MajSimai.Utils;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
@@ -573,12 +573,13 @@ namespace MajSimai
                 return new SimaiChart(level, designer, string.Empty, null);
             }
             var noteContentBuffer = ArrayPool<char>.Shared.Rent(16);
-            var noteRawTimingBuffer = ArrayPool<SimaiRawTimingPoint>.Shared.Rent(16);
             var commaTimingBuffer = ArrayPool<SimaiTimingPoint>.Shared.Rent(16);
+            var rawTimingEntries = new List<RawTimingEntry>();
+            var hSpeedEvents = new List<HSpeedEvent>();
 
             var noteContentBufIndex = 0;
-            var noteRawTimingBufIndex = 0;
             var commaTimingBufIndex = 0;
+            var timingOrder = 0;
 
             float bpm = 0;
             Span<Range> signatureSplits = stackalloc Range[2];
@@ -615,6 +616,132 @@ namespace MajSimai
                 }
 
                 xCount = offset - lastLineOffsetBase;
+            }
+
+            int nextTimingOrder() => timingOrder++;
+
+            void addRawTiming(double timing,
+                              ReadOnlySpan<char> rawContent,
+                              int textPosX,
+                              int textPosY,
+                              float rawBpm,
+                              float hspeed,
+                              int textPos,
+                              int soflanGroup,
+                              int order)
+            {
+                rawTimingEntries.Add(new RawTimingEntry(
+                    new SimaiRawTimingPoint(timing, rawContent, textPosX, textPosY, rawBpm, hspeed, textPos, soflanGroup),
+                    order));
+            }
+
+            void addHSpeedEvent(double timing, int soflanGroup, float hspeed, int order)
+            {
+                hSpeedEvents.Add(new HSpeedEvent(timing, soflanGroup, hspeed, order));
+            }
+
+            void addHSpeedRawTiming(double timing,
+                                    int textPosX,
+                                    int textPosY,
+                                    float rawBpm,
+                                    float hspeed,
+                                    int textPos,
+                                    int soflanGroup,
+                                    int order)
+            {
+                ReadOnlySpan<char> noteContent = string.Empty;
+                addHSpeedEvent(timing, soflanGroup, hspeed, order);
+                addRawTiming(timing, noteContent, textPosX, textPosY, rawBpm, hspeed, textPos, soflanGroup, order);
+            }
+
+            void removeHSpeedEventsInRange(int soflanGroup, double startTime, double endTime)
+            {
+                var lowerBound = Math.Max(0d, startTime);
+                hSpeedEvents.RemoveAll(hs =>
+                    hs.SoflanGroup == soflanGroup &&
+                    IsAfterTime(hs.Timing, lowerBound) &&
+                    !IsAfterTime(hs.Timing, endTime));
+                rawTimingEntries.RemoveAll(entry =>
+                    IsHSpeedRawTiming(entry.RawTiming) &&
+                    entry.RawTiming.SoflanGroup == soflanGroup &&
+                    IsAfterTime(entry.RawTiming.Timing, lowerBound) &&
+                    !IsAfterTime(entry.RawTiming.Timing, endTime));
+            }
+
+            void addHSpeedInterpolation(int soflanGroup,
+                                        float targetHSpeed,
+                                        double duration,
+                                        int textPosX,
+                                        int textPosY,
+                                        int textPos)
+            {
+                if (duration <= 0)
+                {
+                    throw new InvalidSimaiSyntaxException(textPosY, textPosX, "<HS>", "HS interpolation duration must be greater than zero");
+                }
+                if (bpm <= 0)
+                {
+                    throw new InvalidSimaiSyntaxException(textPosY, textPosX, "<HS>", "HS interpolation requires a valid BPM");
+                }
+
+                var endTime = time;
+                var startTime = endTime - duration;
+                var startHSpeed = GetEffectiveHSpeed(hSpeedEvents, soflanGroup, startTime);
+                removeHSpeedEventsInRange(soflanGroup, startTime, endTime);
+
+                var gridSeconds = 60d / bpm / 384d;
+                var stepSeconds = gridSeconds * 32d;
+                var sampleTimes = new List<double>();
+
+                if (startTime >= 0)
+                {
+                    AddUniqueTime(sampleTimes, startTime);
+                }
+                else
+                {
+                    AddUniqueTime(sampleTimes, 0);
+                }
+
+                var firstAlignedStep = (long)Math.Ceiling(Math.Max(0d, startTime) / stepSeconds - TimeEpsilon);
+                for (var stepIndex = firstAlignedStep; ; stepIndex++)
+                {
+                    var sampleTime = stepIndex * stepSeconds;
+                    if (IsAfterTime(sampleTime, endTime))
+                    {
+                        break;
+                    }
+                    if (IsAfterTime(sampleTime, Math.Max(0d, startTime)) && IsAfterTime(endTime, sampleTime))
+                    {
+                        AddUniqueTime(sampleTimes, sampleTime);
+                    }
+                }
+
+                AddUniqueTime(sampleTimes, endTime);
+                sampleTimes.Sort(CompareTime);
+
+                foreach (var sampleTime in sampleTimes)
+                {
+                    var progress = (sampleTime - startTime) / duration;
+                    if (progress < 0)
+                    {
+                        progress = 0;
+                    }
+                    else if (progress > 1)
+                    {
+                        progress = 1;
+                    }
+                    var hspeed = (float)(startHSpeed + (targetHSpeed - startHSpeed) * progress);
+                    if (IsSameTime(sampleTime, endTime))
+                    {
+                        hspeed = targetHSpeed;
+                    }
+                    else if (IsSameTime(sampleTime, startTime))
+                    {
+                        hspeed = startHSpeed;
+                    }
+
+                    addHSpeedRawTiming(sampleTime, textPosX, textPosY, bpm, hspeed, textPos, soflanGroup, nextTimingOrder());
+                }
             }
 
             /// Xcount| 1 2 3 4 5 6 7 8 9 10| 
@@ -771,6 +898,11 @@ namespace MajSimai
                             continue;
                         case '<':// Get HS: <HS*1.0>
                             {
+                                if (insideHsGroup && IsHSpeedTagStart(fumen, i))
+                                {
+                                    getTextPosition(i, out var Xcount, out var Ycount);
+                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[i].ToString(), "HS declaration is not allowed inside HS group scope");
+                                }
                                 if (haveNote)
                                 {
                                     break;
@@ -824,12 +956,17 @@ namespace MajSimai
                                         var hsBody = hsContent[2..]; // after "HS"
                                         var hsGroupNum = 0;
                                         var hasGroup = false;
+                                        var hasHSpeedChange = false;
+                                        var hasInterpolation = false;
+                                        var commandOrder = nextTimingOrder();
+                                        var hsValue = 1f;
+                                        var interpolationDuration = 0d;
 
                                         if (tagIndex != -1)
                                         {
                                             // Has '*': could be <HS*x> or <HSg*x>
                                             var beforeStar = hsContent[2..tagIndex];
-                                            var afterStar = hsContent[(tagIndex + 1)..];
+                                            var afterStar = hsContent[(tagIndex + 1)..].Trim();
 
                                             if (!beforeStar.IsEmpty)
                                             {
@@ -842,11 +979,35 @@ namespace MajSimai
                                                 hasGroup = true;
                                             }
 
-                                            if (!float.TryParse(afterStar, out var hsValue))
+                                            var durationStart = afterStar.IndexOf('[');
+                                            var hSpeedValueBody = afterStar;
+                                            if (durationStart != -1)
+                                            {
+                                                var durationEnd = afterStar.IndexOf(']');
+                                                if (durationEnd == -1 ||
+                                                    durationEnd != afterStar.Length - 1 ||
+                                                    durationStart == 0)
+                                                {
+                                                    getTextPosition(i, out var Xcount, out var Ycount);
+                                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
+                                                }
+
+                                                hSpeedValueBody = afterStar[..durationStart].Trim();
+                                                var durationBody = afterStar[(durationStart + 1)..durationEnd].Trim();
+                                                if (!TryGetHsDuration(bpm, durationBody, out interpolationDuration))
+                                                {
+                                                    getTextPosition(i, out var Xcount, out var Ycount);
+                                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
+                                                }
+                                                hasInterpolation = true;
+                                            }
+
+                                            if (!float.TryParse(hSpeedValueBody, out hsValue))
                                             {
                                                 getTextPosition(i, out var Xcount, out var Ycount);
                                                 throw new InvalidSimaiMarkupException(Ycount, Xcount, hsContent.ToString(), "HSpeed value must be a number");
                                             }
+                                            hasHSpeedChange = true;
 
                                             if (hasGroup)
                                             {
@@ -856,6 +1017,16 @@ namespace MajSimai
                                             {
                                                 // <HS*x> - 旧语法，设置默认组速度
                                                 curHSpeed = hsValue;
+                                            }
+
+                                            if (hasInterpolation)
+                                            {
+                                                getTextPosition(i, out var Xcount, out var Ycount);
+                                                addHSpeedInterpolation(hsGroupNum, hsValue, interpolationDuration, Xcount, Ycount, i);
+                                            }
+                                            else
+                                            {
+                                                addHSpeedEvent(time, hsGroupNum, hsValue, commandOrder);
                                             }
                                         }
                                         else
@@ -878,23 +1049,6 @@ namespace MajSimai
                                         if (nextIdx < fumen.Length && fumen[nextIdx] == '`')
                                         {
                                             i = nextIdx; // skip to '`'
-                                            /*
-                                            getTextPosition(i, out var Xcount, out var Ycount);
-                                            var groupHSpeed = hsGroupSpeeds.TryGetValue(hsGroupNum, out var ghs) ? ghs : 1f;
-
-                                            var earlyTime = time - 0.01f;
-
-                                            var rawTp = new SimaiRawTimingPoint(earlyTime,
-                                                                                    null,
-                                                                                    Xcount,
-                                                                                    Ycount,
-                                                                                    bpm,
-                                                                                    groupHSpeed,
-                                                                                    i,
-                                                                                    hsGroupNum);
-                                            BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
-                                            noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
-                                            */
                                         }
 
                                         // Check for group parentheses: <HSg*x>(...) or <HSg>(...)
@@ -915,19 +1069,21 @@ namespace MajSimai
                                             else
                                             {
                                                 //没有括号,说明只是单纯的变速声明
-                                                var noteContent = string.Empty;
                                                 var groupHSpeed = hsGroupSpeeds.TryGetValue(hsGroupNum, out var ghs) ? ghs : 1f;
                                                 getTextPosition(i, out var Xcount, out var Ycount);
-                                                var rawTp = new SimaiRawTimingPoint(time,
-                                                                                    noteContent,
-                                                                                    Xcount,
-                                                                                    Ycount,
-                                                                                    bpm,
-                                                                                    groupHSpeed,
-                                                                                    i,
-                                                                                    hsGroupNum);
-                                                BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
-                                                noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
+                                                if (hasInterpolation)
+                                                {
+                                                    // 插值命令已经生成了包含 nowTime 在内的空 TimingPoint。
+                                                }
+                                                else if (hasHSpeedChange)
+                                                {
+                                                    ReadOnlySpan<char> noteContent = string.Empty;
+                                                    addRawTiming(time, noteContent, Xcount, Ycount, bpm, groupHSpeed, i, hsGroupNum, commandOrder);
+                                                }
+                                                else
+                                                {
+                                                    addHSpeedRawTiming(time, Xcount, Ycount, bpm, groupHSpeed, i, hsGroupNum, commandOrder);
+                                                }
                                             }
                                         }
                                     }
@@ -952,16 +1108,7 @@ namespace MajSimai
                                     var noteContent = (ReadOnlySpan<char>)(noteContentBuffer.AsSpan(0, noteContentBufIndex));
                                     var groupHSpeed = hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var ghs) ? ghs : 1f;
                                     getTextPosition(i, out var Xcount, out var Ycount);
-                                    var rawTp = new SimaiRawTimingPoint(time,
-                                                                        noteContent,
-                                                                        Xcount,
-                                                                        Ycount,
-                                                                        bpm,
-                                                                        groupHSpeed,
-                                                                        i,
-                                                                        currentSoflanGroup);
-                                    BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
-                                    noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
+                                    addRawTiming(time, noteContent, Xcount, Ycount, bpm, groupHSpeed, i, currentSoflanGroup, nextTimingOrder());
                                     haveNote = false;
                                     noteContentBufIndex = 0;
                                 }
@@ -1003,16 +1150,7 @@ namespace MajSimai
                                         var fakeEachGroup = noteContent[ranges[j]];
                                         //Console.WriteLine(fakeEachGroup.ToString());
                                         getTextPosition(i, out var Xcount, out var Ycount);
-                                        var rawTp = new SimaiRawTimingPoint(fakeTime,
-                                                                            fakeEachGroup,
-                                                                            Xcount,
-                                                                            Ycount,
-                                                                            bpm,
-                                                                            fakeHSpeed,
-                                                                            i,
-                                                                            currentSoflanGroup);
-                                        BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
-                                        noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
+                                        addRawTiming(fakeTime, fakeEachGroup, Xcount, Ycount, bpm, fakeHSpeed, i, currentSoflanGroup, nextTimingOrder());
                                         fakeTime += timeInterval;
                                     }
                                 }
@@ -1027,16 +1165,7 @@ namespace MajSimai
                                     ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var nghs) ? nghs : 1f)
                                     : curHSpeed;
                                 getTextPosition(i, out var Xcount, out var Ycount);
-                                var rawTp = new SimaiRawTimingPoint(time,
-                                                                    noteContent,
-                                                                    Xcount,
-                                                                    Ycount,
-                                                                    bpm,
-                                                                    noteHSpeed,
-                                                                    i,
-                                                                    currentSoflanGroup);
-                                BufferHelper.EnsureBufferLength(noteRawTimingBufIndex + 1, ref noteRawTimingBuffer);
-                                noteRawTimingBuffer[noteRawTimingBufIndex++] = rawTp;
+                                addRawTiming(time, noteContent, Xcount, Ycount, bpm, noteHSpeed, i, currentSoflanGroup, nextTimingOrder());
                             }
                             //Console.WriteLine("Note:" + noteTemp);
 
@@ -1064,10 +1193,24 @@ namespace MajSimai
                 getTextPosition(fumen.Length, out var endXcount, out var endYcount);
                 commaTimingBuffer[commaTimingBufIndex++] = new SimaiTimingPoint(time, null, string.Empty, endXcount, endYcount, bpm, 1, fumen.Length, signatureNumerator, signatureDenominator);
 
-                var noteTimingPoints = new SimaiTimingPoint[noteRawTimingBufIndex];
-                Parallel.For(0, noteRawTimingBufIndex, i =>
+                var finalHSpeedEvents = BuildFinalHSpeedEvents(hSpeedEvents);
+                var finalRawTimingEntries = BuildFinalRawTimingEntries(rawTimingEntries);
+                var noteTimingPoints = new SimaiTimingPoint[finalRawTimingEntries.Count];
+                Parallel.For(0, finalRawTimingEntries.Count, i =>
                 {
-                    var rawTiming = noteRawTimingBuffer[i];
+                    var rawTiming = finalRawTimingEntries[i].RawTiming;
+                    if (!string.IsNullOrEmpty(rawTiming.RawContent))
+                    {
+                        var finalHSpeed = GetEffectiveHSpeed(finalHSpeedEvents, rawTiming.SoflanGroup, rawTiming.Timing);
+                        rawTiming = new SimaiRawTimingPoint(rawTiming.Timing,
+                                                            rawTiming.RawContent.AsSpan(),
+                                                            rawTiming.RawTextPositionX,
+                                                            rawTiming.RawTextPositionY,
+                                                            rawTiming.Bpm,
+                                                            finalHSpeed,
+                                                            rawTiming.RawTextPosition,
+                                                            rawTiming.SoflanGroup);
+                    }
                     var timingPoint = rawTiming.Parse();
                     noteTimingPoints[i] = timingPoint;
                 });
@@ -1075,7 +1218,7 @@ namespace MajSimai
                 return new SimaiChart(level,
                                       designer,
                                       fumen.ToString(),
-                                      noteTimingPoints.AsSpan(0, noteRawTimingBufIndex),
+                                      noteTimingPoints.AsSpan(0, finalRawTimingEntries.Count),
                                       commaTimingBuffer.AsSpan(0, commaTimingBufIndex));
             }
             catch (InvalidSimaiMarkupException)
@@ -1089,7 +1232,6 @@ namespace MajSimai
             finally
             {
                 ArrayPool<char>.Shared.Return(noteContentBuffer);
-                ArrayPool<SimaiRawTimingPoint>.Shared.Return(noteRawTimingBuffer);
                 ArrayPool<SimaiTimingPoint>.Shared.Return(commaTimingBuffer);
             }
         }
@@ -1226,6 +1368,287 @@ namespace MajSimai
             await writer.WriteAsync(fumen);
         }
         #endregion
+        const double TimeEpsilon = 1e-9;
+
+        static bool IsSameTime(double left, double right)
+        {
+            return Math.Abs(left - right) <= TimeEpsilon;
+        }
+
+        static bool IsAfterTime(double left, double right)
+        {
+            return left - right > TimeEpsilon;
+        }
+
+        static int CompareTime(double left, double right)
+        {
+            if (IsSameTime(left, right))
+            {
+                return 0;
+            }
+            return left < right ? -1 : 1;
+        }
+
+        static long GetTimeKey(double timing)
+        {
+            return (long)Math.Round(timing / TimeEpsilon);
+        }
+
+        static bool IsHSpeedRawTiming(SimaiRawTimingPoint rawTiming)
+        {
+            return string.IsNullOrEmpty(rawTiming.RawContent);
+        }
+
+        static bool IsHSpeedTagStart(ReadOnlySpan<char> fumen, int index)
+        {
+            if (index < 0 || index >= fumen.Length || fumen[index] != '<')
+            {
+                return false;
+            }
+
+            index++;
+            while (index < fumen.Length && char.IsWhiteSpace(fumen[index]))
+            {
+                index++;
+            }
+
+            return index + 1 < fumen.Length && fumen[index] == 'H' && fumen[index + 1] == 'S';
+        }
+
+        static void AddUniqueTime(List<double> timings, double timing)
+        {
+            for (var i = 0; i < timings.Count; i++)
+            {
+                if (IsSameTime(timings[i], timing))
+                {
+                    return;
+                }
+            }
+            timings.Add(timing);
+        }
+
+        static bool TryGetHsDuration(double bpm, ReadOnlySpan<char> durationBody, out double time)
+        {
+            time = default;
+            if (durationBody.IsEmpty)
+            {
+                return false;
+            }
+
+            Span<Range> ranges = stackalloc Range[2];
+            var tagCount = durationBody.Split(ranges, '#', StringSplitOptions.None);
+            switch (tagCount)
+            {
+                case 1:
+                    return TryGetTimeFromRatio(bpm, durationBody, out time);
+                case 2:
+                    var param1 = durationBody[ranges[0]];
+                    var param2 = durationBody[ranges[1]];
+                    if (param1.IsEmpty)
+                    {
+                        return double.TryParse(param2, out time);
+                    }
+                    if (param2.IsEmpty || !double.TryParse(param1, out bpm))
+                    {
+                        return false;
+                    }
+                    return TryGetTimeFromRatio(bpm, param2, out time);
+                default:
+                    return false;
+            }
+        }
+
+        static bool TryGetTimeFromRatio(double bpm, ReadOnlySpan<char> ratioBody, out double time)
+        {
+            time = default;
+            if (bpm <= 0)
+            {
+                return false;
+            }
+
+            Span<Range> ranges = stackalloc Range[2];
+            var tagCount = ratioBody.Split(ranges, ':', StringSplitOptions.None);
+            if (tagCount != 2)
+            {
+                return false;
+            }
+
+            var divideStr = ratioBody[ranges[0]];
+            var countStr = ratioBody[ranges[1]];
+            if (divideStr.IsEmpty || countStr.IsEmpty)
+            {
+                return false;
+            }
+            if (!int.TryParse(divideStr, out var divide) || !int.TryParse(countStr, out var count))
+            {
+                return false;
+            }
+            if (divide <= 0 || count < 0)
+            {
+                return false;
+            }
+
+            var timeOneBeat = 1d / (bpm / 60d);
+            time = timeOneBeat * 4d / divide * count;
+            return true;
+        }
+
+        static float GetEffectiveHSpeed(List<HSpeedEvent> hSpeedEvents, int soflanGroup, double timing)
+        {
+            var hspeed = 1f;
+            var bestTimeKey = long.MinValue;
+            var bestOrder = int.MinValue;
+            var timingKey = GetTimeKey(timing);
+
+            for (var i = 0; i < hSpeedEvents.Count; i++)
+            {
+                var hs = hSpeedEvents[i];
+                if (hs.SoflanGroup != soflanGroup)
+                {
+                    continue;
+                }
+
+                var eventTimeKey = GetTimeKey(hs.Timing);
+                if (eventTimeKey > timingKey)
+                {
+                    continue;
+                }
+                if (eventTimeKey > bestTimeKey || (eventTimeKey == bestTimeKey && hs.Order > bestOrder))
+                {
+                    hspeed = hs.HSpeed;
+                    bestTimeKey = eventTimeKey;
+                    bestOrder = hs.Order;
+                }
+            }
+
+            return hspeed;
+        }
+
+        static List<HSpeedEvent> BuildFinalHSpeedEvents(List<HSpeedEvent> hSpeedEvents)
+        {
+            var sortedEvents = new List<HSpeedEvent>(hSpeedEvents);
+            sortedEvents.Sort((left, right) =>
+            {
+                var leftTimeKey = GetTimeKey(left.Timing);
+                var rightTimeKey = GetTimeKey(right.Timing);
+                var c = leftTimeKey.CompareTo(rightTimeKey);
+                if (c != 0)
+                {
+                    return c;
+                }
+                c = left.SoflanGroup.CompareTo(right.SoflanGroup);
+                if (c != 0)
+                {
+                    return c;
+                }
+                return left.Order.CompareTo(right.Order);
+            });
+
+            var finalEvents = new List<HSpeedEvent>();
+            var eventIndexMap = new Dictionary<(long TimeKey, int SoflanGroup), int>();
+            for (var i = 0; i < sortedEvents.Count; i++)
+            {
+                var hs = sortedEvents[i];
+                var key = (GetTimeKey(hs.Timing), hs.SoflanGroup);
+                if (eventIndexMap.TryGetValue(key, out var index))
+                {
+                    finalEvents[index] = hs;
+                }
+                else
+                {
+                    eventIndexMap[key] = finalEvents.Count;
+                    finalEvents.Add(hs);
+                }
+            }
+
+            finalEvents.Sort((left, right) =>
+            {
+                var leftTimeKey = GetTimeKey(left.Timing);
+                var rightTimeKey = GetTimeKey(right.Timing);
+                var c = leftTimeKey.CompareTo(rightTimeKey);
+                if (c != 0)
+                {
+                    return c;
+                }
+                return left.Order.CompareTo(right.Order);
+            });
+            return finalEvents;
+        }
+
+        static List<RawTimingEntry> BuildFinalRawTimingEntries(List<RawTimingEntry> rawTimingEntries)
+        {
+            var sortedEntries = new List<RawTimingEntry>(rawTimingEntries);
+            sortedEntries.Sort((left, right) =>
+            {
+                var leftTimeKey = GetTimeKey(left.RawTiming.Timing);
+                var rightTimeKey = GetTimeKey(right.RawTiming.Timing);
+                var c = leftTimeKey.CompareTo(rightTimeKey);
+                if (c != 0)
+                {
+                    return c;
+                }
+
+                var leftIsHSpeed = IsHSpeedRawTiming(left.RawTiming);
+                var rightIsHSpeed = IsHSpeedRawTiming(right.RawTiming);
+                if (leftIsHSpeed != rightIsHSpeed)
+                {
+                    return leftIsHSpeed ? -1 : 1;
+                }
+
+                return left.Order.CompareTo(right.Order);
+            });
+
+            var finalEntries = new List<RawTimingEntry>();
+            var hSpeedIndexMap = new Dictionary<(long TimeKey, int SoflanGroup), int>();
+            for (var i = 0; i < sortedEntries.Count; i++)
+            {
+                var entry = sortedEntries[i];
+                if (IsHSpeedRawTiming(entry.RawTiming))
+                {
+                    var key = (GetTimeKey(entry.RawTiming.Timing), entry.RawTiming.SoflanGroup);
+                    if (hSpeedIndexMap.TryGetValue(key, out var index))
+                    {
+                        finalEntries[index] = entry;
+                        continue;
+                    }
+
+                    hSpeedIndexMap[key] = finalEntries.Count;
+                }
+
+                finalEntries.Add(entry);
+            }
+
+            return finalEntries;
+        }
+
+        readonly struct RawTimingEntry
+        {
+            public SimaiRawTimingPoint RawTiming { get; }
+            public int Order { get; }
+
+            public RawTimingEntry(SimaiRawTimingPoint rawTiming, int order)
+            {
+                RawTiming = rawTiming;
+                Order = order;
+            }
+        }
+
+        readonly struct HSpeedEvent
+        {
+            public double Timing { get; }
+            public int SoflanGroup { get; }
+            public float HSpeed { get; }
+            public int Order { get; }
+
+            public HSpeedEvent(double timing, int soflanGroup, float hspeed, int order)
+            {
+                Timing = timing;
+                SoflanGroup = soflanGroup;
+                HSpeed = hspeed;
+                Order = order;
+            }
+        }
+
         static class MD5Helper
         {
             public static byte[] ComputeHash(byte[] data)
