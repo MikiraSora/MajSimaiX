@@ -551,6 +551,11 @@ namespace MajSimai
         {
             return ParseChart(string.Empty, string.Empty, fumen, position, out requestTime);
         }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static SimaiChart ParseChart(ReadOnlySpan<char> fumen, long position, int hSpeedInterpolationGrid, out double requestTime)
+        {
+            return ParseChart(string.Empty, string.Empty, fumen, position, hSpeedInterpolationGrid, out requestTime);
+        }
         /// <summary>
         /// Read simai chart from <paramref name="fumen"/> and parse it into <seealso cref="SimaiChart"/>
         /// </summary>
@@ -559,6 +564,10 @@ namespace MajSimai
         /// <param name="fumen">Simai chart</param>
         /// <returns></returns>
         public static SimaiChart ParseChart(string level, string designer, ReadOnlySpan<char> fumen, long position, out double requestTime)
+        {
+            return ParseChart(level, designer, fumen, position, 32, out requestTime);
+        }
+        public static SimaiChart ParseChart(string level, string designer, ReadOnlySpan<char> fumen, long position, int hSpeedInterpolationGrid, out double requestTime)
         {
             requestTime = default;
             static bool IsNote(char c)
@@ -571,6 +580,10 @@ namespace MajSimai
             if (fumen.IsEmpty)
             {
                 return new SimaiChart(level, designer, string.Empty, null);
+            }
+            if (hSpeedInterpolationGrid <= 0)
+            {
+                hSpeedInterpolationGrid = 32;
             }
             var noteContentBuffer = ArrayPool<char>.Shared.Rent(16);
             var commaTimingBuffer = ArrayPool<SimaiTimingPoint>.Shared.Rent(16);
@@ -690,7 +703,7 @@ namespace MajSimai
                 removeHSpeedEventsInRange(soflanGroup, startTime, endTime);
 
                 var gridSeconds = 60d / bpm / 384d;
-                var stepSeconds = gridSeconds * 32d;
+                var stepSeconds = gridSeconds * hSpeedInterpolationGrid;
                 var sampleTimes = new List<double>();
 
                 if (startTime >= 0)
