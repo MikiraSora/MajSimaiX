@@ -178,9 +178,8 @@ namespace MajSimai
         /// <param name="newValue">The value to replace all occurrences of <paramref name="oldValue"/>.</param>
         /// <exception cref="ArgumentException">The <paramref name="dest"/> span was shorter than the <paramref name="source"/> span.</exception>
         /// <exception cref="ArgumentException">The <paramref name="source"/> and <paramref name="dest"/> were overlapping but not referring to the same starting location.</exception>
-        public static unsafe void Replace<T>(this ReadOnlySpan<T> source, Span<T> dest, T oldValue, T newValue) where T : IEquatable<T>?
+        public static void Replace<T>(this ReadOnlySpan<T> source, Span<T> dest, T oldValue, T newValue) where T : IEquatable<T>?
         {
-#pragma warning disable CS8500
             if (dest.Length < source.Length)
             {
                 throw new ArgumentException("Destination is too short", nameof(dest));
@@ -189,13 +188,8 @@ namespace MajSimai
             {
                 return;
             }
-            var srcPtr = Unsafe.AsPointer(ref MemoryMarshal.GetReference(source));
-            var dstPtr = Unsafe.AsPointer(ref MemoryMarshal.GetReference(dest));
-            var offset = (ulong)(((T*)dstPtr - (T*)srcPtr) * sizeof(T));
-            var srcLen = (ulong)(source.Length * sizeof(T));
-            var dstLen = (ulong)(dest.Length * sizeof(T));
-            
-            if(offset != 0 && (offset < srcLen || ulong.MinValue - offset < dstLen))
+
+            if (source.Overlaps(dest, out var elementOffset) && elementOffset != 0)
             {
                 throw new ArgumentException("The source and dest were overlapping but not referring to the same starting location");
             }
@@ -212,7 +206,6 @@ namespace MajSimai
                     dest[i] = value;
                 }
             }
-#pragma warning restore CS8500
         }
     }
 }
