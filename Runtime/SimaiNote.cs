@@ -18,6 +18,11 @@ namespace MajSimai
         public bool IsMine { get; set; } //炸弹音符
         public bool IsMineSlide { get; set; }
         public int SoflanGroup { get; set; } = 0; //变速分组
+        public bool IsFixedSoflan { get; set; }
+        public bool HasFixedSoflanSpeed { get; set; }
+        public float FixedSoflanSpeed { get; set; } = DefaultFixedSoflanSpeed;
+
+        public const float DefaultFixedSoflanSpeed = 600f;
 
         public string RawContent { get; set; } //used for star explain
 

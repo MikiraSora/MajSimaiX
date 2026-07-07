@@ -1176,6 +1176,11 @@ namespace MajSimai
                         haveNote = true;
                         noteContentBufIndex = 0;
                     }
+                    else if (!haveNote && fumen[i] == '@')
+                    {
+                        getTextPosition(i, out var Xcount, out var Ycount);
+                        throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[i].ToString(), "FixedSoflan modifier must be placed at the end of a note");
+                    }
 
                     if (fumen[i] == ',')
                     {
@@ -1249,8 +1254,15 @@ namespace MajSimai
                 var finalHSpeedEvents = BuildFinalHSpeedEvents(hSpeedEvents);
                 var finalRawTimingEntries = BuildFinalRawTimingEntries(rawTimingEntries);
                 var noteTimingPoints = new SimaiTimingPoint[finalRawTimingEntries.Count];
-                Parallel.For(0, finalRawTimingEntries.Count, i =>
+                InvalidSimaiMarkupException? parseException = null;
+                Parallel.For(0, finalRawTimingEntries.Count, (i, state) =>
                 {
+                    if (parseException != null)
+                    {
+                        state.Stop();
+                        return;
+                    }
+
                     var rawTiming = finalRawTimingEntries[i].RawTiming;
                     if (!string.IsNullOrEmpty(rawTiming.RawContent))
                     {
@@ -1264,9 +1276,29 @@ namespace MajSimai
                                                             rawTiming.RawTextPosition,
                                                             rawTiming.SoflanGroup);
                     }
-                    var timingPoint = rawTiming.Parse();
-                    noteTimingPoints[i] = timingPoint;
+                    try
+                    {
+                        var timingPoint = rawTiming.Parse();
+                        noteTimingPoints[i] = timingPoint;
+                    }
+                    catch (InvalidSimaiMarkupException ex)
+                    {
+                        var mappedException = ex.Line == 0 && ex.Column == 0
+                            ? new InvalidSimaiSyntaxException(rawTiming.RawTextPositionY,
+                                                              rawTiming.RawTextPositionX,
+                                                              ex.Content,
+                                                              ex.Message)
+                            : ex;
+                        if (System.Threading.Interlocked.CompareExchange(ref parseException, mappedException, null) == null)
+                        {
+                            state.Stop();
+                        }
+                    }
                 });
+                if (parseException != null)
+                {
+                    throw parseException;
+                }
 
                 return new SimaiChart(level,
                                       designer,
