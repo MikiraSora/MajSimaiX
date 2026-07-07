@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -35,7 +36,8 @@ namespace MajSimai
             }
             try
             {
-                if (noteContent.Length == 2 && int.TryParse(noteContent, out _)) //连写数字
+                var hasFixedSoflanModifier = noteContent.Contains('@');
+                if (!hasFixedSoflanModifier && noteContent.Length == 2 && int.TryParse(noteContent, out _)) //连写数字
                 {
                     if (TryGetSingleNote(timing, bpm, noteContent.Slice(0, 1), out var note1))
                     {
@@ -107,6 +109,10 @@ namespace MajSimai
                     ArrayPool<Range>.Shared.Return(rentedArray, true);
                 }
             }
+            catch(InvalidSimaiMarkupException)
+            {
+                throw;
+            }
             catch(Exception e)
             {
                 Debug.WriteLine(e.ToString());
@@ -163,9 +169,14 @@ namespace MajSimai
         internal static bool TryGetSingleNote(double timing, double bpm, zString noteText,[NotNullWhen(true)] out SimaiNote? outSimaiNote)
         {
             outSimaiNote = default;
-            Span<char> noteTextCopy = stackalloc char[noteText.Length];
-            noteText.CopyTo(noteTextCopy);
-            var detectResult = NoteHelper.NoteFlag.Detect(noteText, noteTextCopy);
+            if (!TryParseFixedSoflanModifier(noteText, out var baseNoteText, out var isFixedSoflan, out var hasFixedSoflanSpeed, out var fixedSoflanSpeed))
+            {
+                throw new InvalidSimaiSyntaxException(0, 0, noteText.ToString(), "Invalid FixedSoflan modifier");
+            }
+
+            Span<char> noteTextCopy = stackalloc char[baseNoteText.Length];
+            baseNoteText.CopyTo(noteTextCopy);
+            var detectResult = NoteHelper.NoteFlag.Detect(baseNoteText, noteTextCopy);
             noteTextCopy = detectResult.NoteContent;
 
             var simaiNote = new SimaiNote();
@@ -249,6 +260,11 @@ namespace MajSimai
             //slide
             if (detectResult.IsSlide)
             {
+                if (isFixedSoflan && (detectResult.IsSlideNoHead || detectResult.IsSlideNoHeadAndDelay))
+                {
+                    throw new InvalidSimaiSyntaxException(0, 0, noteText.ToString(), "FixedSoflan modifier is only supported on slide star heads");
+                }
+
                 simaiNote.Type = SimaiNoteType.Slide;
                 if(!NoteHelper.TryGetSlideParams(bpm, noteTextCopy, out var slideParams))
                 {
@@ -285,9 +301,145 @@ namespace MajSimai
             simaiNote.IsMine = detectResult.IsMine;
             simaiNote.IsMineSlide = detectResult.IsMineSlide;
 
+            simaiNote.IsFixedSoflan = isFixedSoflan;
+            simaiNote.HasFixedSoflanSpeed = hasFixedSoflanSpeed;
+            simaiNote.FixedSoflanSpeed = fixedSoflanSpeed;
             simaiNote.RawContent = new string(noteTextCopy.Trim());
             outSimaiNote = simaiNote;
             return true;
+        }
+
+        static bool TryParseFixedSoflanModifier(zString noteText,
+                                                out zString baseNoteText,
+                                                out bool isFixedSoflan,
+                                                out bool hasFixedSoflanSpeed,
+                                                out float fixedSoflanSpeed)
+        {
+            baseNoteText = noteText;
+            isFixedSoflan = false;
+            hasFixedSoflanSpeed = false;
+            fixedSoflanSpeed = SimaiNote.DefaultFixedSoflanSpeed;
+
+            var fixedSoflanIndex = noteText.IndexOf('@');
+            if (fixedSoflanIndex < 0)
+            {
+                return true;
+            }
+
+            if (noteText.Slice(fixedSoflanIndex + 1).IndexOf('@') >= 0)
+            {
+                return false;
+            }
+
+            var firstSlideMarkIndex = IndexOfFirstSlideMark(noteText);
+            if (firstSlideMarkIndex >= 0)
+            {
+                if (fixedSoflanIndex > firstSlideMarkIndex)
+                {
+                    return false;
+                }
+
+                var slideHeadSpeedBody = noteText.Slice(fixedSoflanIndex + 1, firstSlideMarkIndex - fixedSoflanIndex - 1);
+                if (!TryParseFixedSoflanSpeed(slideHeadSpeedBody, out hasFixedSoflanSpeed, out fixedSoflanSpeed))
+                {
+                    return false;
+                }
+
+                isFixedSoflan = true;
+                baseNoteText = RemoveFixedSoflanModifier(noteText, fixedSoflanIndex, firstSlideMarkIndex);
+                return !baseNoteText.IsEmpty && !IsShorthandTapPair(baseNoteText);
+            }
+
+            var speedBody = noteText.Slice(fixedSoflanIndex + 1);
+            if (!TryParseFixedSoflanSpeed(speedBody, out hasFixedSoflanSpeed, out fixedSoflanSpeed))
+            {
+                return false;
+            }
+
+            isFixedSoflan = true;
+            baseNoteText = noteText.Slice(0, fixedSoflanIndex);
+            return !baseNoteText.IsEmpty && !IsShorthandTapPair(baseNoteText);
+        }
+
+        static bool TryParseFixedSoflanSpeed(zString speedBody, out bool hasFixedSoflanSpeed, out float fixedSoflanSpeed)
+        {
+            hasFixedSoflanSpeed = false;
+            fixedSoflanSpeed = SimaiNote.DefaultFixedSoflanSpeed;
+
+            if (speedBody.IsEmpty)
+            {
+                return true;
+            }
+
+            for (var i = 0; i < speedBody.Length; i++)
+            {
+                if (char.IsWhiteSpace(speedBody[i]))
+                {
+                    return false;
+                }
+            }
+
+            if (!float.TryParse(speedBody, NumberStyles.Float, CultureInfo.InvariantCulture, out fixedSoflanSpeed) ||
+                float.IsNaN(fixedSoflanSpeed) ||
+                float.IsInfinity(fixedSoflanSpeed) ||
+                fixedSoflanSpeed <= 0)
+            {
+                return false;
+            }
+
+            hasFixedSoflanSpeed = true;
+            return true;
+        }
+
+        static int IndexOfFirstSlideMark(zString noteText)
+        {
+            for (var i = 0; i < noteText.Length; i++)
+            {
+                if (IsSlideMark(noteText[i]))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        static bool IsSlideMark(char c)
+        {
+            switch (c)
+            {
+                case '-':
+                case '^':
+                case 'v':
+                case '<':
+                case '>':
+                case 'V':
+                case 'p':
+                case 'q':
+                case 's':
+                case 'z':
+                case 'w':
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static string RemoveFixedSoflanModifier(zString noteText, int fixedSoflanIndex, int modifierEndIndex)
+        {
+            var buffer = new char[noteText.Length - (modifierEndIndex - fixedSoflanIndex)];
+            noteText.Slice(0, fixedSoflanIndex).CopyTo(buffer);
+            noteText.Slice(modifierEndIndex).CopyTo(buffer.AsSpan(fixedSoflanIndex));
+            return new string(buffer);
+        }
+
+        static bool IsShorthandTapPair(zString noteText)
+        {
+            return noteText.Length == 2 &&
+                   noteText[0] >= '0' &&
+                   noteText[0] <= '9' &&
+                   noteText[1] >= '0' &&
+                   noteText[1] <= '9';
         }
 
         

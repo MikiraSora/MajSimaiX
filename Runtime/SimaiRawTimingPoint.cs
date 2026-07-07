@@ -26,6 +26,11 @@ namespace MajSimai
             RawTextPosition = textPos;
             if (!rawContent.IsEmpty)
             {
+                if (rawContent.Contains('@') && !IsFixedSoflanModifierSpacingValid(rawContent))
+                {
+                    throw new InvalidSimaiSyntaxException(textPosY, textPosX, rawContent.ToString(), "Invalid FixedSoflan modifier");
+                }
+
                 Span<char> rCSpan = stackalloc char[rawContent.Length];
                 rawContent.Replace(rCSpan, '\n', ' ');
                 var i2 = 0;
@@ -58,6 +63,78 @@ namespace MajSimai
             Bpm = bpm;
             HSpeed = hspeed;
             SoflanGroup = soflanGroup;
+        }
+
+        static bool IsFixedSoflanModifierSpacingValid(ReadOnlySpan<char> rawContent)
+        {
+            for (var i = 0; i < rawContent.Length; i++)
+            {
+                if (rawContent[i] != '@')
+                {
+                    continue;
+                }
+
+                var tokenStart = i - 1;
+                while (tokenStart >= 0 && rawContent[tokenStart] != '/' && rawContent[tokenStart] != '`' && rawContent[tokenStart] != '*')
+                {
+                    if (char.IsWhiteSpace(rawContent[tokenStart]))
+                    {
+                        return false;
+                    }
+                    tokenStart--;
+                }
+
+                var hasSpeedChar = false;
+                var seenTrailingWhitespace = false;
+                for (var j = i + 1; j < rawContent.Length; j++)
+                {
+                    var current = rawContent[j];
+                    if (current == '/' || current == '`' || current == '*' || IsSlideMark(current))
+                    {
+                        break;
+                    }
+
+                    if (char.IsWhiteSpace(current))
+                    {
+                        if (!hasSpeedChar)
+                        {
+                            return false;
+                        }
+                        seenTrailingWhitespace = true;
+                        continue;
+                    }
+
+                    if (seenTrailingWhitespace)
+                    {
+                        return false;
+                    }
+
+                    hasSpeedChar = true;
+                }
+            }
+
+            return true;
+        }
+
+        static bool IsSlideMark(char c)
+        {
+            switch (c)
+            {
+                case '-':
+                case '^':
+                case 'v':
+                case '<':
+                case '>':
+                case 'V':
+                case 'p':
+                case 'q':
+                case 's':
+                case 'z':
+                case 'w':
+                    return true;
+                default:
+                    return false;
+            }
         }
         public SimaiTimingPoint Parse()
         {
