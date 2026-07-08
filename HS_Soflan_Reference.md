@@ -2,171 +2,423 @@
 
 ## 概述
 
-HS（Hi-Speed）即变速/Soflan 系统，用于控制谱面中音符的下落速度。MajSimaiX 支持两种模式：
+HS（Hi-Speed）是 MajSimaiX 的视觉变速 / Soflan 系统。它只描述谱面时间轴上的视觉速度变化，不应改变音频时间、判定时间或 note 本身的逻辑时间。
 
-1. **传统全局变速** — 所有音符共享同一速度
-2. **分组变速（Grouped Soflan）** — 不同音符组可拥有独立速度
+当前实现分两层：
+
+- **MajSimaiX 解析层**：解析 `<HS...>`、Soflan group、插值采样，以及按物件声明的 FixedSoflan `@` 修饰符。
+- **MajdataView 运行时层**：`SoflanManager` 把解析结果转换为运行时 Soflan 时间轴，具体物件类决定是否使用 Soflan 时间轴显示。
+
+支持的 HS 模式：
+
+1. **全局变速**：默认 group `0`，未进入分组作用域的音符使用全局 HSpeed。
+2. **分组变速（Grouped Soflan）**：不同 group 拥有独立 HSpeed 时间轴，音符可进入指定 group。
+3. **线性插值变速**：把一段时间内的 HSpeed 展开为采样点。
+4. **FixedSoflan**：按单个 Tap / Star 系物件声明固定视觉速度，使其 Soflan 显示进度不受玩家 note speed 影响。
 
 ---
 
-## 一、语法格式
+## 一、核心数据模型
 
-### 1. 传统全局变速 `<HS*x>`
+### 解析输出
 
+`SimaiTimingPoint` 保存 timing 级别的 Soflan 信息：
+
+```csharp
+public float HSpeed { get; set; } = 1f;
+public int SoflanGroup { get; } = 0;
 ```
+
+`SimaiNote` 保存 note 级别的 Soflan / FixedSoflan 信息：
+
+```csharp
+public int SoflanGroup { get; set; } = 0;
+public bool IsFixedSoflan { get; set; }
+public bool HasFixedSoflanSpeed { get; set; }
+public float FixedSoflanSpeed { get; set; } = DefaultFixedSoflanSpeed;
+public const float DefaultFixedSoflanSpeed = 600f;
+```
+
+解析后 `SimaiRawTimingPoint.GetTimingPoint()` 会把当前 timing 的 `SoflanGroup` 传给 `SimaiNoteParser.GetNotes(...)`。当 group 非 `0` 时，该 timing 下解析出的每个 note 都会写入相同的 `SimaiNote.SoflanGroup`。
+
+### 运行时转换
+
+`SoflanManager.loadChart(...)` 遍历 `SimaiTimingPoint`：
+
+- BPM 变化进入 `bpmList`。
+- `HSpeed` 变化按 `SoflanGroup` 生成 `KeyframeSoflan`。
+- 只要出现至少一个 `HSpeed != 上一次同组 HSpeed`，`containsSoflans()` 变为 `true`。
+- note 的 `SoflanGroup` 被登记；当前运行时主要使用 timing / component 上的 group 计算显示时间轴。
+
+运行时 Soflan 时间差由 `NoteDrop` 提供：
+
+```csharp
+protected float GetSoflanValue(float inputMsec) =>
+    SoflanManager.Instance.ConvertAudioTimeToY_PreviewMode(inputMsec, soflanGroup, speed);
+
+protected float GetSoflanTiming() =>
+    (GetSoflanValue(timeProvider.AudioTime * 1000.0f) - soflanTime) / 1000.0f;
+```
+
+其中 `soflanTime` 是 note 判定时刻在对应 group Soflan 时间轴上的 Y 值。判定仍使用真实 `AudioTime - time`。
+
+---
+
+## 二、HS 语法格式
+
+### 1. 全局瞬时变速 `<HS*x>`
+
+```text
 <HS*1.0>
 <HS*2.5>
 ```
 
-- `x` 为浮点数，表示速度倍率
-- 作用于声明之后的**所有音符**，直到下一个 `<HS*>` 出现
-- 默认值为 `1.0`
+- `x` 为浮点数，表示速度倍率。
+- 作用于声明之后未进入分组作用域的音符。
+- 默认值为 `1.0`。
 
-**示例：**
-```
+示例：
+
+```text
 (120)
-1,2,3,4,          // HSpeed = 1.0（默认）
+1,2,3,4,          // HSpeed = 1.0
 <HS*2.0>
 1,2,3,4,          // HSpeed = 2.0
 <HS*0.5>
 1,2,3,4,          // HSpeed = 0.5
 ```
 
-### 2. 分组变速（带速度） `<HSg*x>`
+### 2. 分组瞬时变速 `<HSg*x>`
 
-```
+```text
 <HS2*1.25>
 <HS0*3.0>
 ```
 
-- `g` 为非负整数（`>= 0`），表示变速组编号
-- `x` 为浮点数，表示该组的速度倍率
-- 声明后，该组编号与速度的映射会被记录，后续可复用
+- `g` 为非负整数，表示 Soflan group。
+- `x` 为浮点数，表示该 group 的速度倍率。
+- 声明后，该 group 的当前速度会被记录，后续 `<HSg>(...)` 或 `<HSg>` 可复用。
+- `<HS0*x>` 合法，表示显式修改默认 group `0` 的速度。
 
 ### 3. 线性插值变速 `<HS*x[duration]>` / `<HSg*x[duration]>`
 
-```
+```text
 <HS*2.0[8:1]>
 <HS1*0.5[#1.25]>
 <HS2*3.0[150#4:1]>
 ```
 
 - `duration` 复用 Hold 持续时间语法：
-  - `[8:1]`：按当前 BPM 计算比例时值
-  - `[150#8:1]`：按指定 BPM 计算比例时值
-  - `[#1.25]`：直接指定秒数
-- 语义为：从 `nowTime - duration` 开始，将该组在起点时的有效速度线性插值到 `nowTime` 的目标速度 `x`
-- 解析阶段会展开为多个空 `noteContent` 的 `SimaiRawTimingPoint`
-- 插值采样按命令处当前 BPM 的 384-grid 对齐，并且每 32 grid 采样一次
-- `startTime` 和 `nowTime` 保留真实时间；即使不落在 32-grid 上也会生成端点
-- 如果理论 `startTime < 0`，小于 0 的采样点会被忽略，但会额外在 `t = 0` 生成一次插值点
-- 终点 `nowTime` 必定生成，速度精确等于 `x`
-- 同组 `(startTime, nowTime]` 内已有的 HS 空点会被后解析的插值命令覆盖
-- 插值完成后，该组当前速度更新为 `x`
-- 本版本只支持线性插值；`[duration]` 后不允许追加 `eio` 等 easing 后缀
+  - `[8:1]`：按当前 BPM 计算比例时值。
+  - `[150#8:1]`：按指定 BPM 计算比例时值。
+  - `[#1.25]`：直接指定秒数。
+- 语义为：从 `nowTime - duration` 开始，将该 group 在起点时的有效 HSpeed 线性插值到 `nowTime` 的目标速度 `x`。
+- 解析阶段会展开为空 `noteContent` 的 `SimaiRawTimingPoint`，运行时把这些空点视为 HSpeed 变化点。
+- 插值采样按命令处当前 BPM 的 384-grid 对齐，并且每 32 grid 采样一次。
+- `startTime` 和 `nowTime` 保留真实时间；即使不落在 32-grid 上也会生成端点。
+- 如果理论 `startTime < 0`，小于 `0` 的采样点会被忽略，但会额外在 `t = 0` 生成一次插值点。
+- 终点 `nowTime` 必定生成，速度精确等于 `x`。
+- 同 group `(startTime, nowTime]` 内已有的 HS 空点会被后解析的插值命令覆盖。
+- 插值完成后，该 group 当前速度更新为 `x`。
+- 当前版本只支持线性插值；`[duration]` 后不允许追加 `eio` 等 easing 后缀。
 
-### 4. 链式 HSpeed 插值 `<HS*x[duration]~y[duration]...>` / `<HSg*x[duration]~y[duration]...>`
+### 4. 链式插值 `<HS*x[duration]~y[duration]...>` / `<HSg*x[duration]~y[duration]...>`
 
-```
+```text
 <HS*2.0[8:1]~1.0[4:1]~-0.5[#1.25]>
 <HS1*0[4:1]~-1[4:1]>
 ```
 
-- 使用 `~` 串联多个插值段，每一段都必须写成 `targetHSpeed[duration]`
-- 总时长为所有 `duration` 之和，整条曲线从 `nowTime - totalDuration` 开始，在 `nowTime` 到达最后一个目标速度
-- 第一段从起点时的有效 HSpeed 渐变到第一个目标速度；后续每段从上一段目标速度渐变到下一段目标速度
-- 各段边界和 `nowTime` 都会强制生成采样点，即使边界不落在配置的 interpolation grid 上
-- 负数和 `0` HSpeed 允许，例如 `~-1[4:1]`
-- 出现 `~` 时不允许瞬时段；`<HS*2~1[4:1]>` 和 `<HS*2[4:1]~1>` 都是非法语法
-- 旧的单段插值语法 `<HS*2.0[8:1]>` 等价于只有一个 segment 的链式插值
-- 本版本只支持线性插值，不支持每段 easing 后缀
+- 使用 `~` 串联多个插值段，每一段都必须写成 `targetHSpeed[duration]`。
+- 总时长为所有 `duration` 之和，整条曲线从 `nowTime - totalDuration` 开始，在 `nowTime` 到达最后一个目标速度。
+- 第一段从起点时的有效 HSpeed 渐变到第一个目标速度；后续每段从上一段目标速度渐变到下一段目标速度。
+- 各段边界和 `nowTime` 都会强制生成采样点，即使边界不落在 interpolation grid 上。
+- 负数和 `0` HSpeed 允许，例如 `~-1[4:1]`。
+- 出现 `~` 时不允许瞬时段；`<HS*2~1[4:1]>` 和 `<HS*2[4:1]~1>` 都是非法语法。
+- `<HS*2.0[8:1]>` 等价于只有一个 segment 的链式插值。
+- 当前版本只支持线性插值，不支持每段 easing 后缀。
 
-### 5. 分组变速 + 括号作用域 `<HSg*x>(...)`  /  `<HSg>(...)`
+### 5. 分组作用域 `<HSg*x>(...)` / `<HSg>(...)`
 
-```
+```text
 <HS2*2.0>(1,2,3,4),
 <HS1>(5,6,7,8),
 <HS1*1.5[8:1]>(1,2,3,4),
 ```
 
-- 括号 `()` 内的所有音符属于指定的变速组
-- 括号结束后自动退出分组模式，回到默认组（组 0）
-- 括号内可包含逗号分隔的多个拍位
-- 括号作用域内不支持再写任何 HS 声明，遇到会抛出 `InvalidSimaiSyntaxException`
+- 括号 `()` 内的所有音符属于指定 Soflan group。
+- 括号结束后自动退出分组模式，回到默认 group `0`。
+- 括号内可包含逗号分隔的多个拍位。
+- 括号作用域内不支持再写任何 HS 声明，遇到会抛出 `InvalidSimaiSyntaxException`。
 
 ---
 
-## 二、语法规则与约束
+## 三、FixedSoflan 语法
 
-| 规则 | 说明 |
-|------|------|
-| `<HS*x>` 中 `x` 必须是合法浮点数 | 否则抛出 `InvalidSimaiMarkupException` |
-| `<HSg*x>` 中 `g` 必须是非负整数 (`>= 0`) | 否则抛出 `InvalidSimaiSyntaxException` |
-| `<HSg>` 中 `g` 必须是正整数 (`> 0`) | 组号 0 是默认组，不能单独声明 |
-| `<HS*x[duration]>` / `<HSg*x[duration]>` 中 `duration` 必须为正时长 | `0` 或负时长非法；瞬时变速请使用不带 `[duration]` 的语法 |
-| `<HSg[duration]>` 不合法 | 没有目标速度，无法插值 |
-| `[duration]` 后不能追加尾随字符 | easing 后缀留待未来扩展 |
-| `<` 和 `>` 之间不能有多个 `*` | 否则抛出语法错误 |
-| 标签内容必须以 `HS` 开头 | 否则抛出语法错误 |
-| 括号 `()` 与 `<HSg>` 之间允许有空格和换行 | 解析器会跳过空白字符寻找 `(` |
-| HS 声明不能出现在音符内容中间 | 如果已经开始读取音符（`haveNote = true`），遇到 `<` 会跳出 |
-| `<HSg>(...)` 作用域内禁止 HS 声明 | 否则抛出 `InvalidSimaiSyntaxException` |
+MajSimaiX 使用 `@` 作为 FixedSoflan note 修饰符。它是**单个 note 的修饰符**，不是 HS 命令，也不是 group 命令。
 
-### 解析流程
+### 1. Tap / Star 头语法
 
-```
-遇到 '<' 字符
-  │
-  ├─ 读取到 '>' 之间的内容，存入 buffer
-  │
-  ├─ 验证内容以 "HS" 开头
-  │
-  ├─ 查找 '*' 的位置 (tagIndex)
-  │
-  ├─ 有 '*' (tagIndex != -1)
-  │   │
-  │   ├─ '*' 前有内容 (beforeStar 非空) → <HSg*x> 格式
-  │   │   ├─ 解析组号 g = int(beforeStar)，要求 g >= 0
-  │   │   ├─ 解析速度 x = float(afterStar)
-  │   │   └─ 存入 hsGroupSpeeds[g] = x
-  │   │
-  │   └─ '*' 前无内容 (beforeStar 为空) → <HS*x> 格式
-  │       ├─ 解析速度 x = float(afterStar)
-  │       └─ 设置 curHSpeed = x
-  │
-  └─ 无 '*' (tagIndex == -1) → <HSg> 格式
-      ├─ 解析组号 g = int(hsBody)，要求 g > 0
-      └─ 标记 hasGroup = true
-
-如果 hasGroup == true:
-  │
-  ├─ 向前查找 '(' （跳过空格和换行）
-  │
-  ├─ 找到 '(' → 进入括号模式
-  │   ├─ insideHsGroup = true
-  │   ├─ currentSoflanGroup = g
-  │   └─ 跳转到 '(' 位置继续解析
-  │
-  └─ 未找到 '(' → 无括号的独立声明
-      └─ 创建一个空内容的 TimingPoint（记录该组速度变化点）
+```text
+1@
+1@600
+1@750.5
+1@-3[8:1]
+1@600-3[8:1]
+1@w5[8:1]
 ```
 
-### 音符速度确定
+含义：
 
-当遇到逗号 `,` 提交音符时：
+- `@`：启用 FixedSoflan，固定速度使用默认值 `600`。
+- `@600` / `@750.5`：启用 FixedSoflan，并显式指定固定视觉速度。
+- 对 Slide / Wifi 的星星头，`@` 必须写在第一个 slide mark 之前，例如 `1@-3[8:1]`。
+- `@` 只修饰当前 token；`1@/2` 中只有 `1` 是 FixedSoflan。
+- `@` 不自动创建 Soflan group，也不自动创建 HSpeed 变化。它只改变该 note 在 Soflan 显示分支中使用的 Tap / Star 视觉速度。
+
+### 2. 与 group 的关系
+
+FixedSoflan 和 Soflan group 是两件事：
+
+```text
+<HS1*2.0>(1@,2,3@750,)
+```
+
+- `1@`、`3@750` 属于 group `1`，并启用 FixedSoflan。
+- `2` 属于 group `1`，但不启用 FixedSoflan。
+- 如果没有任何 HSpeed 变化导致 `SoflanManager.containsSoflans()` 为 `true`，当前 MajdataView 运行时不会进入 Tap / Star 的 Soflan 分支；此时 `@` 虽然被解析，但显示逻辑仍走普通路径。
+
+### 3. 速度解析规则
+
+- 速度使用 invariant culture 浮点解析。
+- 速度必须是正数。
+- `NaN`、`Infinity`、`0`、负数非法。
+- `@` 后速度为空表示默认 `600`。
+- 速度文本内部不允许空白。
+- 同一个 note token 内只能出现一个 `@`。
+
+### 4. 位置限制
+
+合法：
+
+```text
+1@
+1@600
+1@600-3[8:1]
+```
+
+非法：
+
+```text
+@1
+1@@
+1@ 600
+1-3@600[8:1]
+```
+
+说明：
+
+- 对非 slide token，`@` 必须位于 note token 末尾或末尾速度之前。
+- 对 slide / wifi token，`@` 必须位于星星头之后、第一个 slide mark 之前。
+- Slide no-head / delayed no-head 不能携带 `@`；解析器会报 `FixedSoflan modifier is only supported on slide star heads`。
+- 解析器会先检查 `@` 附近空白，再去除 raw content 中其它空白。
+
+---
+
+## 四、解析流程与约束
+
+### HS 标签解析
+
+```text
+遇到 '<'
+  |
+  +-- 读取到 '>' 之间的内容
+  |
+  +-- 验证内容以 "HS" 开头
+  |
+  +-- 查找 '*'
+      |
+      +-- 有 '*'
+      |   |
+      |   +-- '*' 前有 group: <HSg*x>
+      |   |   +-- 解析 g，要求 g >= 0
+      |   |   +-- 解析 x 或 x[duration] / 链式 segment
+      |   |   +-- 瞬时命令写入 group 当前速度
+      |   |   +-- 插值命令展开为 HSpeed 空点
+      |   |
+      |   +-- '*' 前无 group: <HS*x>
+      |       +-- 解析 x 或 x[duration] / 链式 segment
+      |       +-- 瞬时命令写入全局当前速度
+      |       +-- 插值命令展开为默认 group 0 的 HSpeed 空点
+      |
+      +-- 无 '*': <HSg>
+          |
+          +-- 解析 g，要求 g > 0
+          +-- 如果后面是 (...)，进入分组作用域
+          +-- 否则生成空 TimingPoint，记录该 group 当前速度
+```
+
+提交 note 时，当前 timing 的 HSpeed 由当前 group 决定：
 
 ```csharp
-// 如果当前在分组内，使用分组速度；否则使用全局速度
 var noteHSpeed = currentSoflanGroup != 0
     ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var nghs) ? nghs : 1f)
     : curHSpeed;
 ```
 
-## 六、完整示例
+最终输出前会调用 `BuildFinalHSpeedEvents(...)` 和 `GetEffectiveHSpeed(...)`，按同 group、同时间、解析顺序合并 HSpeed 事件，并把每个 raw timing 的最终有效 HSpeed 补齐。
 
-### 示例 1：传统变速
+### FixedSoflan 解析
 
+`SimaiRawTimingPoint` 先检查 raw content 中 `@` 附近空白是否合法，再移除一般空白。`SimaiNoteParser.TryGetSingleNote(...)` 再执行：
+
+```text
+TryParseFixedSoflanModifier(noteText)
+  |
+  +-- 没有 '@': 不启用 FixedSoflan
+  |
+  +-- 多个 '@': 非法
+  |
+  +-- 有 slide mark
+  |   |
+  |   +-- '@' 在第一个 slide mark 后: 非法
+  |   +-- 解析 '@' 到 slide mark 之间的速度文本
+  |   +-- 移除该修饰符后继续按普通 slide 解析
+  |
+  +-- 没有 slide mark
+      |
+      +-- 解析 '@' 后的速度文本
+      +-- '@' 前内容作为普通 note 解析
 ```
+
+解析成功后写入：
+
+```csharp
+simaiNote.IsFixedSoflan = isFixedSoflan;
+simaiNote.HasFixedSoflanSpeed = hasFixedSoflanSpeed;
+simaiNote.FixedSoflanSpeed = fixedSoflanSpeed;
+```
+
+---
+
+## 五、MajdataView 物件 Soflan 支持矩阵
+
+下表描述的是当前主工程 `Assets/Scripts` 的运行时行为。解析器能把 `SoflanGroup` 和 `FixedSoflan` 字段写入 note，不代表对应 Unity 组件一定会使用 Soflan 时间轴显示。
+
+| 物件 / 组件 | Soflan 时间轴显示 | FixedSoflan | 运行时依据 |
+| --- | --- | --- | --- |
+| Tap / Break / EX Tap (`TapBase`, `TapDrop`) | 支持 | 支持 | `TapBase.Update_soflan()` 使用 `GetSoflanTiming()`；`GetSoflanTapDistance/Scale()` 在 `isFixedSoflan` 时使用 `fixedSoflanSpeed`。 |
+| Force Star / 普通 Star (`StarDrop`) | 支持 | 支持 | `StarDrop.Update_soflan()` 镜像 Tap 的 Soflan 位移和缩放，FixedSoflan 复用 `TapBase` 算法。 |
+| Slide 星星头 (`StarDrop`) | 支持 | 支持，仅星星头 | `JsonDataLoader.InstantiateStar(...)` 对星星头调用 `ApplyFixedSoflan(...)` 并写入 `soflanGroup/soflanTime`。 |
+| Wifi 星星头 (`StarDrop`) | 支持 | 支持，仅星星头 | `InstantiateWifi(...)` 中星星头同样应用 FixedSoflan 和 Soflan timing。 |
+| Hold / BreakHold / EX Hold (`HoldDrop`) | 支持 | 不支持 | `HoldDrop.Update_soflan()` 使用 `GetSoflanTiming()` 和 `GetSoflanEndTiming()`，但没有 FixedSoflan 字段和固定速度算法。 |
+| Touch (`TouchDrop`) | 不支持 | 不支持 | Loader 写入了 `soflanGroup/soflanTime`，但 `TouchDrop.Update()` 只使用真实 `AudioTime - time` 和 touch speed。 |
+| TouchHold (`TouchHoldDrop`) | 不支持 | 不支持 | Loader 写入了 `soflanGroup/soflanTime`，但显示和判定分支使用真实 timing。 |
+| Slide body (`SlideDrop`) | 不支持 | 不支持 | `SlideDrop` 不读取 `SoflanManager`，也不调用 `GetSoflanTiming()`；移动、星星 guide、销毁均基于真实 `AudioTime`。 |
+| Wifi body (`WifiDrop`) | 不支持 | 不支持 | `WifiDrop` 不读取 Soflan 时间轴；只使用真实 slide start / duration。 |
+| EachLine (`EachLineDrop`) | 不支持 | 不支持 | 该组件不继承 `NoteDrop`，只用 `AudioTime - time` 和 `speed` 计算 scale / visible。 |
+
+关键边界：
+
+- SlideDrop / WifiDrop 不应受 SoflanTiming 影响。只有它们的星星头可以受 Soflan / FixedSoflan 影响。
+- `StarDrop.Update_soflan()` 激活 slide body 时使用 `GetTapScale(GetJudgeTiming()) >= 1f`，即真实音频 timing 的普通 Tap scale，而不是 Soflan timing。这用于保证 slide body 出现时机不被 Soflan 时间轴改变。
+- Touch / TouchHold 虽然在 loader 中被写入 `soflanGroup/soflanTime`，但当前组件没有 Soflan 分支，因此视觉上不受 HS 影响。
+- 判定统一不受 Soflan 影响；各物件判定仍使用真实音频时间。
+
+---
+
+## 六、FixedSoflan 运行时细节
+
+### 接入点
+
+`JsonDataLoader.ApplyFixedSoflan(...)` 把解析字段写入 `TapBase`：
+
+```csharp
+private void ApplyFixedSoflan(TapBase noteDrop, SimaiNote note)
+{
+    noteDrop.isFixedSoflan = note.IsFixedSoflan;
+    noteDrop.fixedSoflanSpeed = note.FixedSoflanSpeed;
+}
+```
+
+它只会被调用在 `TapBase` 派生物件上，包括 Tap、Force Star、Slide 星星头、Wifi 星星头。
+
+### 固定速度算法
+
+`TapBase` 在 Soflan 分支中使用固定视觉速度：
+
+```csharp
+protected bool IsFixedSoflanEnabled()
+{
+    return isFixedSoflan && fixedSoflanSpeed > 0f;
+}
+
+protected float GetSoflanNoteSpeedValue()
+{
+    return IsFixedSoflanEnabled() ? fixedSoflanSpeed : noteSpeedValue;
+}
+```
+
+基础时间窗：
+
+```csharp
+DefaultMsec = 240000 / speedValue
+```
+
+Mai bug 修正：
+
+```csharp
+speedRatio = speedValue / 150
+MaiBugAdjustMSec =
+    (speedRatio - 1) * (-0.5 / speedRatio) * 1.6 * 1000 / 60
+```
+
+移动和缩放时间点：
+
+```csharp
+MoveStartTime = DefaultMsec - MaiBugAdjustMSec
+ScaleStartTime = 2 * DefaultMsec - MaiBugAdjustMSec
+```
+
+Soflan Tap 位移和缩放：
+
+```csharp
+progress = (MoveStartTime + timing * 1000) / (2 * MoveStartTime)
+outsideDistance = 4.8 + (4.8 - 1.225)
+distance = Lerp(1.225, outsideDistance, progress)
+
+scale = (ScaleStartTime - Abs(timing * 1000)) / DefaultMsec
+```
+
+其中 `timing` 在 Soflan 谱面中来自 `GetSoflanTiming()`，不是 `AudioTime - time`。FixedSoflan 只替换 `speedValue`，不替换 timing 来源。
+
+### 默认速度 600 的含义
+
+`@` 等价于 `@600`。固定速度 `600` 时：
+
+```text
+DefaultMsec = 400ms
+MaiBugAdjustMSec = -10ms
+MoveStartTime = 410ms
+ScaleStartTime = 810ms
+```
+
+因此 FixedSoflan Tap / Star 会用固定 `600` 的显示窗口计算移动和缩放进度。玩家 note speed 改变时，该物件在 Soflan 分支里的移动 / 缩放进度保持一致。
+
+### 生效边界
+
+- FixedSoflan 只在 `SoflanManager.containsSoflans()` 为 `true` 时进入当前 Tap / Star Soflan 分支。
+- 无 HS 变化的谱面中，`@` 会被解析，但 `TapBase.Update()` 走普通路径，当前普通路径不会调用 `GetSoflanTapDistance/Scale()`。
+- FixedSoflan 不改变可判定时间、miss 时间、autoplay 时间。
+- FixedSoflan 不扩散到同 timing 的其它 each note，也不扩散到 slide body / wifi body。
+
+---
+
+## 七、完整示例
+
+### 示例 1：传统全局变速
+
+```text
 (120)
 {4}
 <HS*1.0>1,2,3,4,
@@ -174,11 +426,11 @@ var noteHSpeed = currentSoflanGroup != 0
 <HS*1.0>1,2,3,4,
 ```
 
-效果：第二行音符以 2 倍速下落。
+效果：第二行开始默认 group `0` 的物件以 2 倍 HS 时间轴显示。
 
-### 示例 2：分组变速（括号模式）
+### 示例 2：分组变速
 
-```
+```text
 (150)
 {4}
 <HS1*2.0>(1,2,3,4),
@@ -187,13 +439,14 @@ var noteHSpeed = currentSoflanGroup != 0
 ```
 
 效果：
-- 组 1 的音符以 2.0 倍速下落
-- 组 2 的音符以 0.5 倍速下落
-- 最后一行不在任何组内，使用默认速度 1.0
 
-### 示例 3：先声明速度，后引用组号
+- 组 `1` 的物件使用 2.0 倍 HSpeed。
+- 组 `2` 的物件使用 0.5 倍 HSpeed。
+- 最后一行回到默认 group `0`，使用全局速度。
 
-```
+### 示例 3：先声明速度，后引用 group
+
+```text
 (120)
 {4}
 <HS1*1.5>
@@ -203,39 +456,76 @@ var noteHSpeed = currentSoflanGroup != 0
 ```
 
 效果：
-- 先声明组 1 速度 1.5、组 2 速度 3.0（生成空 TimingPoint）
-- 后续通过 `<HS1>` 和 `<HS2>` 引用已声明的速度
 
-### 示例 4：混合使用
+- 先声明 group `1` 速度 1.5、group `2` 速度 3.0，并生成空 TimingPoint。
+- 后续 `<HS1>(...)` 和 `<HS2>(...)` 引用已声明速度。
 
-```
+### 示例 4：FixedSoflan Tap
+
+```text
 (130)
 {4}
-<HS*1.0>1,2,
-<HS1*2.0>(3,4,5,),
-6,7,8,
-<HS1>(1,2,),
+<HS1*2.0>(1@,2,3@750,4,),
 ```
 
 效果：
-- `1,2,` 使用全局速度 1.0
-- `3,4,5,` 属于组 1，速度 2.0
-- `6,7,8,` 退出括号后回到默认，使用全局速度 1.0
-- `1,2,` 再次引用组 1，速度仍为 2.0
+
+- `1@` 属于 group `1`，使用默认固定速度 `600` 计算 Soflan Tap 视觉进度。
+- `3@750` 属于 group `1`，使用固定速度 `750`。
+- `2`、`4` 属于 group `1`，但按玩家 note speed 计算 Soflan Tap 视觉进度。
+
+### 示例 5：FixedSoflan Slide 星星头
+
+```text
+(130)
+{4}
+<HS1*2.0>(1@-3[8:1],2@750w5[8:1],),
+```
+
+效果：
+
+- `1@-3[8:1]` 和 `2@750w5[8:1]` 的星星头受 Soflan / FixedSoflan 影响。
+- SlideDrop / WifiDrop 本体不受 SoflanTiming 影响，仍按真实 slide start / duration 播放。
 
 ---
 
-## 七、错误处理
+## 八、错误处理
 
-| 错误类型 | 触发条件 | 异常类型 |
-|----------|----------|----------|
-| HS 内容不以 "HS" 开头 | `<XX*1.0>` | `InvalidSimaiSyntaxException` |
-| 多个 `*` 号 | `<HS*1*2>` | `InvalidSimaiSyntaxException` |
-| 组号非法（非整数或负数） | `<HS-1*1.0>`, `<HSabc*1.0>` | `InvalidSimaiSyntaxException` |
-| 仅组号格式中组号 <= 0 | `<HS0>`, `<HS-1>` | `InvalidSimaiSyntaxException` |
-| 速度值非法（非数字） | `<HS*abc>` | `InvalidSimaiMarkupException` |
+| 错误类型 | 示例 | 异常类型 / 信息 |
+| --- | --- | --- |
+| HS 内容不以 `HS` 开头 | `<XX*1.0>` | `InvalidSimaiSyntaxException` |
+| 多个 `*` | `<HS*1*2>` | `InvalidSimaiSyntaxException` |
+| group 非整数或负数 | `<HS-1*1.0>`, `<HSabc*1.0>` | `InvalidSimaiSyntaxException` |
+| 仅 group 格式中 group <= 0 | `<HS0>`, `<HS-1>` | `InvalidSimaiSyntaxException` |
+| HSpeed 非数字 | `<HS*abc>` | `InvalidSimaiMarkupException` |
 | 插值时长非法 | `<HS*2.0[8:0]>`, `<HS*2.0[#0]>` | `InvalidSimaiSyntaxException` |
-| 只有组号却带时长 | `<HS1[8:1]>` | `InvalidSimaiSyntaxException` |
+| 只有 group 却带时长 | `<HS1[8:1]>` | `InvalidSimaiSyntaxException` |
 | 插值时长后有尾随字符 | `<HS1*2.0[8:1]eio>` | `InvalidSimaiSyntaxException` |
 | 分组作用域内声明 HS | `<HS1>(<HS1*2.0>1,)` | `InvalidSimaiSyntaxException` |
-| `<` 后内容不足 4 字符 | `<H>` | `InvalidSimaiMarkupException` |
+| `<` 后内容不足 | `<H>` | `InvalidSimaiMarkupException` |
+| `@` 不在 note token 末尾或 slide mark 前 | `@1`, `1-3@600[8:1]` | `Invalid FixedSoflan modifier` |
+| 同一 token 多个 `@` | `1@@`, `1@600@700` | `Invalid FixedSoflan modifier` |
+| `@` 速度含空白 | `1@ 600`, `1@6 00` | `Invalid FixedSoflan modifier` |
+| `@` 速度非法 | `1@0`, `1@-600`, `1@NaN`, `1@Infinity` | `Invalid FixedSoflan modifier` |
+| Slide no-head 携带 `@` | no-head / delayed no-head slide token 中写 `@` | `FixedSoflan modifier is only supported on slide star heads` |
+
+---
+
+## 九、实现文件索引
+
+MajSimaiX 解析层：
+
+- `Runtime/SimaiParser.cs`：`<HS...>` 标签、group 作用域、插值采样、最终 HSpeed 事件合并。
+- `Runtime/SimaiRawTimingPoint.cs`：raw content 空白处理、FixedSoflan `@` 空白规则、`SoflanGroup` 传递。
+- `Runtime/SimaiNoteParser.cs`：note 解析、`@` 修饰符、FixedSoflan 字段写入、slide star head 限制。
+- `Runtime/SimaiNote.cs`：`SoflanGroup`、`IsFixedSoflan`、`HasFixedSoflanSpeed`、`FixedSoflanSpeed` 数据字段。
+
+MajdataView 运行时：
+
+- `Assets/Scripts/Misc/SoflanManager.cs`：HSpeed 到 Soflan 时间轴的转换、group 缓存、`containsSoflans()`。
+- `Assets/Scripts/JsonDataLoader.cs`：把解析结果写入各 Unity 组件；只对 `TapBase` 派生物件调用 `ApplyFixedSoflan(...)`。
+- `Assets/Scripts/Notes/NoteDrop.cs`：通用 Soflan timing 计算。
+- `Assets/Scripts/Notes/TapBase.cs`：Tap / Star 系 Soflan 与 FixedSoflan 核心移动、缩放算法。
+- `Assets/Scripts/Notes/StarDrop.cs`：Star Soflan 分支，以及不受 SoflanTiming 影响的 slide body 激活条件。
+- `Assets/Scripts/Notes/HoldDrop.cs`：Hold 的 Soflan head / tail 显示。
+- `Assets/Scripts/Notes/SlideDrop.cs`、`WifiDrop.cs`、`TouchDrop.cs`、`TouchHoldDrop.cs`、`EachLineDrop.cs`：当前不使用 Soflan timing 的物件实现。
