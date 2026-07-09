@@ -73,6 +73,7 @@ MajSimai is an interpreter for [Simai](https://w.atwiki.jp/simai/), written in [
 - [x] HSpeed / Soflan
   - [x] Global `<HS*float>`
   - [x] Grouped `<HSg*float>` and `<HSg>(...)`
+  - [x] Auto grouped `<HS?*float>(...)`
   - [x] Linear interpolation `<HS*float[duration]>` and `<HSg*float[duration]>`
 - [ ] EOF flag `E`
 

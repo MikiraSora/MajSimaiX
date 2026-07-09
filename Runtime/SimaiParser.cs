@@ -600,6 +600,7 @@ namespace MajSimai
             int signatureDenominator = 4;
             var curHSpeed = 1f;
             var hsGroupSpeeds = new Dictionary<int, float>(); // 各组独立速度
+            var nextAutoGroupNum = -1; // <HS?*> 未定义组号变速组的下一个内部负数标号
             var currentSoflanGroup = 0; // 当前音符所属变速组
             var insideHsGroup = false; // 是否在 <HSg>(...) 的括号内
             double time = 0; //in seconds
@@ -1023,6 +1024,7 @@ namespace MajSimai
                                         var hsBody = hsContent[2..]; // after "HS"
                                         var hsGroupNum = 0;
                                         var hasGroup = false;
+                                        var isAutoGroup = false;
                                         var hasHSpeedChange = false;
                                         var hSpeedSegments = new List<HSpeedSegment>();
                                         var hasInterpolation = false;
@@ -1037,8 +1039,13 @@ namespace MajSimai
 
                                             if (!beforeStar.IsEmpty)
                                             {
-                                                // <HSg*x> format
-                                                if (!int.TryParse(beforeStar, out hsGroupNum) || hsGroupNum < 0)
+                                                // <HSg*x> format, or <HS?*x> auto (undefined) group
+                                                if (beforeStar.Length == 1 && beforeStar[0] == '?')
+                                                {
+                                                    hsGroupNum = nextAutoGroupNum--;
+                                                    isAutoGroup = true;
+                                                }
+                                                else if (!int.TryParse(beforeStar, out hsGroupNum) || hsGroupNum < 0)
                                                 {
                                                     getTextPosition(i, out var Xcount, out var Ycount);
                                                     throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "HS group number must be a non-negative integer");
@@ -1085,6 +1092,11 @@ namespace MajSimai
                                         else
                                         {
                                             // No '*': must be <HSg> format (group only, no speed change)
+                                            if (hsBody.Length == 1 && hsBody[0] == '?')
+                                            {
+                                                getTextPosition(i, out var Xcount, out var Ycount);
+                                                throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Undefined HS group requires a speed value (use <HS?*speed>)");
+                                            }
                                             if (!int.TryParse(hsBody, out hsGroupNum) || hsGroupNum <= 0)
                                             {
                                                 getTextPosition(i, out var Xcount, out var Ycount);
@@ -1121,6 +1133,11 @@ namespace MajSimai
                                             }
                                             else
                                             {
+                                                if (isAutoGroup)
+                                                {
+                                                    getTextPosition(i, out var autoGroupXcount, out var autoGroupYcount);
+                                                    throw new InvalidSimaiSyntaxException(autoGroupYcount, autoGroupXcount, hsContent.ToString(), "Undefined HS group requires a scope (...) after the declaration");
+                                                }
                                                 //没有括号,说明只是单纯的变速声明
                                                 var groupHSpeed = hsGroupSpeeds.TryGetValue(hsGroupNum, out var ghs) ? ghs : 1f;
                                                 getTextPosition(i, out var Xcount, out var Ycount);
