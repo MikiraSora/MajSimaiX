@@ -347,8 +347,8 @@ simaiNote.FixedSoflanSpeed = fixedSoflanSpeed;
 | Slide 星星头 (`StarDrop`) | 支持 | 支持，仅星星头 | `JsonDataLoader.InstantiateStar(...)` 对星星头调用 `ApplyFixedSoflan(...)` 并写入 `soflanGroup/soflanTime`。 |
 | Wifi 星星头 (`StarDrop`) | 支持 | 支持，仅星星头 | `InstantiateWifi(...)` 中星星头同样应用 FixedSoflan 和 Soflan timing。 |
 | Hold / BreakHold / EX Hold (`HoldDrop`) | 支持 | 不支持 | `HoldDrop.Update_soflan()` 使用 `GetSoflanTiming()` 和 `GetSoflanEndTiming()`，但没有 FixedSoflan 字段和固定速度算法。 |
-| Touch (`TouchDrop`) | 不支持 | 不支持 | Loader 写入了 `soflanGroup/soflanTime`，但 `TouchDrop.Update()` 只使用真实 `AudioTime - time` 和 touch speed。 |
-| TouchHold (`TouchHoldDrop`) | 不支持 | 不支持 | Loader 写入了 `soflanGroup/soflanTime`，但显示和判定分支使用真实 timing。 |
+| Touch (`TouchDrop`) | 支持 | 不支持 | `TouchDrop.Update_soflan()` 使用 `GetSoflanTiming()` 计算风扇位移和显示；判定仍使用真实 `AudioTime - time`。 |
+| TouchHold (`TouchHoldDrop`) | 支持 | 不支持 | `TouchHoldDrop.Update_soflan()` 使用 `GetSoflanTiming()` 和 `GetSoflanEndTiming()`；mask 填充进度按 Soflan 时间轴换算；判定仍使用真实 timing。 |
 | Slide body (`SlideDrop`) | 不支持 | 不支持 | `SlideDrop` 不读取 `SoflanManager`，也不调用 `GetSoflanTiming()`；移动、星星 guide、销毁均基于真实 `AudioTime`。 |
 | Wifi body (`WifiDrop`) | 不支持 | 不支持 | `WifiDrop` 不读取 Soflan 时间轴；只使用真实 slide start / duration。 |
 | EachLine (`EachLineDrop`) | 不支持 | 不支持 | 该组件不继承 `NoteDrop`，只用 `AudioTime - time` 和 `speed` 计算 scale / visible。 |
@@ -357,7 +357,7 @@ simaiNote.FixedSoflanSpeed = fixedSoflanSpeed;
 
 - SlideDrop / WifiDrop 不应受 SoflanTiming 影响。只有它们的星星头可以受 Soflan / FixedSoflan 影响。
 - `StarDrop.Update_soflan()` 激活 slide body 时使用 `GetTapScale(GetJudgeTiming()) >= 1f`，即真实音频 timing 的普通 Tap scale，而不是 Soflan timing。这用于保证 slide body 出现时机不被 Soflan 时间轴改变。
-- Touch / TouchHold 虽然在 loader 中被写入 `soflanGroup/soflanTime`，但当前组件没有 Soflan 分支，因此视觉上不受 HS 影响。
+- Touch / TouchHold 的 `Update_soflan()` 使用 Soflan timing 计算风扇位移和显示；判定仍使用真实 `AudioTime - time`，不受 HS 影响。
 - 判定统一不受 Soflan 影响；各物件判定仍使用真实音频时间。
 
 ---
@@ -590,4 +590,6 @@ MajdataView 运行时：
 - `Assets/Scripts/Notes/TapBase.cs`：Tap / Star 系 Soflan 与 FixedSoflan 核心移动、缩放算法。
 - `Assets/Scripts/Notes/StarDrop.cs`：Star Soflan 分支，以及不受 SoflanTiming 影响的 slide body 激活条件。
 - `Assets/Scripts/Notes/HoldDrop.cs`：Hold 的 Soflan head / tail 显示。
-- `Assets/Scripts/Notes/SlideDrop.cs`、`WifiDrop.cs`、`TouchDrop.cs`、`TouchHoldDrop.cs`、`EachLineDrop.cs`：当前不使用 Soflan timing 的物件实现。
+- `Assets/Scripts/Notes/TouchDrop.cs`：Touch 的 Soflan 风扇位移分支。
+- `Assets/Scripts/Notes/TouchHoldDrop.cs`：TouchHold 的 Soflan 风扇位移和 mask 填充分支。
+- `Assets/Scripts/Notes/SlideDrop.cs`、`WifiDrop.cs`、`EachLineDrop.cs`：当前不使用 Soflan timing 的物件实现。
