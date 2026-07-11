@@ -796,7 +796,8 @@ namespace MajSimai
                     {
                         progress = 1;
                     }
-                    var hspeed = (float)(segmentStartHSpeed + (segment.TargetHSpeed - segmentStartHSpeed) * progress);
+                    var easedProgress = ApplyHSpeedEasing(segment.Easing, progress);
+                    var hspeed = (float)(segmentStartHSpeed + (segment.TargetHSpeed - segmentStartHSpeed) * easedProgress);
                     if (IsSameTime(sampleTime, segmentStartTime))
                     {
                         hspeed = segmentStartHSpeed;
@@ -1011,6 +1012,11 @@ namespace MajSimai
                                             BufferHelper.EnsureBufferLength(bufferIndex + 1, ref buffer);
                                             buffer[bufferIndex++] = currentChar;
                                         }
+                                        if (HasLineBreakInsideHSpeedEasingName(fumen[startAt..i]))
+                                        {
+                                            getTextPosition(i, out var Xcount, out var Ycount);
+                                            throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[(startAt - 1)..Math.Min(i + 1, fumen.Length)].ToString(), "HSpeed easing name cannot contain line breaks");
+                                        }
                                         var hsContent = buffer.AsSpan(0, bufferIndex);
                                         if (hsContent.IsEmpty ||
                                             hsContent.Length < 3 ||
@@ -1058,12 +1064,17 @@ namespace MajSimai
                                                                      hSpeedSegments,
                                                                      out hsValue,
                                                                      out hasInterpolation,
-                                                                     out var parseError))
+                                                                     out var parseError,
+                                                                     out var invalidEasing))
                                             {
                                                 getTextPosition(i, out var Xcount, out var Ycount);
                                                 if (parseError == HSpeedValueParseError.InvalidHSpeed)
                                                 {
                                                     throw new InvalidSimaiMarkupException(Ycount, Xcount, hsContent.ToString(), "HSpeed value must be a number");
+                                                }
+                                                if (parseError == HSpeedValueParseError.UnknownEasing)
+                                                {
+                                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), $"Unknown HSpeed easing \"{invalidEasing}\"");
                                                 }
                                                 throw new InvalidSimaiSyntaxException(Ycount, Xcount, hsContent.ToString(), "Unexpected HS declaration syntax");
                                             }
@@ -1560,16 +1571,234 @@ namespace MajSimai
             }
         }
 
+        static bool HasLineBreakInsideHSpeedEasingName(ReadOnlySpan<char> body)
+        {
+            var segmentStart = 0;
+            while (segmentStart < body.Length)
+            {
+                var durationEndOffset = body[segmentStart..].IndexOf(']');
+                if (durationEndOffset == -1)
+                {
+                    return false;
+                }
+
+                var easingStart = segmentStart + durationEndOffset + 1;
+                var separatorOffset = body[easingStart..].IndexOf('~');
+                var segmentEnd = separatorOffset == -1 ? body.Length : easingStart + separatorOffset;
+                var easingBody = body[easingStart..segmentEnd];
+                var firstNameCharacter = 0;
+                while (firstNameCharacter < easingBody.Length && char.IsWhiteSpace(easingBody[firstNameCharacter]))
+                {
+                    firstNameCharacter++;
+                }
+
+                var lastNameCharacter = easingBody.Length - 1;
+                while (lastNameCharacter >= firstNameCharacter && char.IsWhiteSpace(easingBody[lastNameCharacter]))
+                {
+                    lastNameCharacter--;
+                }
+
+                for (var index = firstNameCharacter; index <= lastNameCharacter; index++)
+                {
+                    if (easingBody[index] == '\r' || easingBody[index] == '\n')
+                    {
+                        return true;
+                    }
+                }
+
+                if (separatorOffset == -1)
+                {
+                    return false;
+                }
+                segmentStart = segmentEnd + 1;
+            }
+
+            return false;
+        }
+
+        static bool TryParseHSpeedEasing(ReadOnlySpan<char> body, out HSpeedEasing easing)
+        {
+            easing = HSpeedEasing.Linear;
+            body = body.Trim();
+            if (body.IsEmpty)
+            {
+                return true;
+            }
+
+            for (var index = 0; index < body.Length; index++)
+            {
+                if (!char.IsLetter(body[index]))
+                {
+                    return false;
+                }
+            }
+
+            if (body.Equals("linear".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string easingName;
+            if (body.StartsWith("ease".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                easingName = body.ToString();
+            }
+            else if (body.StartsWith("io".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                easingName = "EaseInOut" + body[2..].ToString();
+            }
+            else if (body.StartsWith("i".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                easingName = "EaseIn" + body[1..].ToString();
+            }
+            else if (body.StartsWith("o".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                easingName = "EaseOut" + body[1..].ToString();
+            }
+            else
+            {
+                return false;
+            }
+
+            return Enum.TryParse(easingName, true, out easing);
+        }
+
+        static double ApplyHSpeedEasing(HSpeedEasing easing, double progress)
+        {
+            const double backOvershoot = 1.70158;
+            const double inOutBackOvershoot = backOvershoot * 1.525;
+            const double backScale = backOvershoot + 1;
+            var elasticInOutPeriod = 2 * Math.PI / 4.5;
+            var elasticPeriod = 2 * Math.PI / 3;
+
+            switch (easing)
+            {
+                case HSpeedEasing.Linear:
+                    return progress;
+                case HSpeedEasing.EaseInQuad:
+                    return progress * progress;
+                case HSpeedEasing.EaseOutQuad:
+                    return 1 - (1 - progress) * (1 - progress);
+                case HSpeedEasing.EaseInOutQuad:
+                    return progress < 0.5 ? 2 * progress * progress : 1 - Math.Pow(-2 * progress + 2, 2) / 2;
+                case HSpeedEasing.EaseInCubic:
+                    return progress * progress * progress;
+                case HSpeedEasing.EaseOutCubic:
+                    return 1 - Math.Pow(1 - progress, 3);
+                case HSpeedEasing.EaseInOutCubic:
+                    return progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.Pow(-2 * progress + 2, 3) / 2;
+                case HSpeedEasing.EaseInQuart:
+                    return progress * progress * progress * progress;
+                case HSpeedEasing.EaseOutQuart:
+                    return 1 - Math.Pow(1 - progress, 4);
+                case HSpeedEasing.EaseInOutQuart:
+                    return progress < 0.5 ? 8 * Math.Pow(progress, 4) : 1 - Math.Pow(-2 * progress + 2, 4) / 2;
+                case HSpeedEasing.EaseInQuint:
+                    return Math.Pow(progress, 5);
+                case HSpeedEasing.EaseOutQuint:
+                    return 1 - Math.Pow(1 - progress, 5);
+                case HSpeedEasing.EaseInOutQuint:
+                    return progress < 0.5 ? 16 * Math.Pow(progress, 5) : 1 - Math.Pow(-2 * progress + 2, 5) / 2;
+                case HSpeedEasing.EaseInSine:
+                    return 1 - Math.Cos(progress * Math.PI / 2);
+                case HSpeedEasing.EaseOutSine:
+                    return Math.Sin(progress * Math.PI / 2);
+                case HSpeedEasing.EaseInOutSine:
+                    return -(Math.Cos(Math.PI * progress) - 1) / 2;
+                case HSpeedEasing.EaseInExpo:
+                    return progress == 0 ? 0 : Math.Pow(2, 10 * progress - 10);
+                case HSpeedEasing.EaseOutExpo:
+                    return progress == 1 ? 1 : 1 - Math.Pow(2, -10 * progress);
+                case HSpeedEasing.EaseInOutExpo:
+                    if (progress == 0 || progress == 1)
+                    {
+                        return progress;
+                    }
+                    return progress < 0.5 ? Math.Pow(2, 20 * progress - 10) / 2 : (2 - Math.Pow(2, -20 * progress + 10)) / 2;
+                case HSpeedEasing.EaseInCirc:
+                    return 1 - Math.Sqrt(1 - progress * progress);
+                case HSpeedEasing.EaseOutCirc:
+                    return Math.Sqrt(1 - Math.Pow(progress - 1, 2));
+                case HSpeedEasing.EaseInOutCirc:
+                    return progress < 0.5
+                        ? (1 - Math.Sqrt(1 - Math.Pow(2 * progress, 2))) / 2
+                        : (Math.Sqrt(1 - Math.Pow(-2 * progress + 2, 2)) + 1) / 2;
+                case HSpeedEasing.EaseInBack:
+                    return backScale * progress * progress * progress - backOvershoot * progress * progress;
+                case HSpeedEasing.EaseOutBack:
+                    return 1 + backScale * Math.Pow(progress - 1, 3) + backOvershoot * Math.Pow(progress - 1, 2);
+                case HSpeedEasing.EaseInOutBack:
+                    return progress < 0.5
+                        ? Math.Pow(2 * progress, 2) * ((inOutBackOvershoot + 1) * 2 * progress - inOutBackOvershoot) / 2
+                        : (Math.Pow(2 * progress - 2, 2) * ((inOutBackOvershoot + 1) * (progress * 2 - 2) + inOutBackOvershoot) + 2) / 2;
+                case HSpeedEasing.EaseInElastic:
+                    if (progress == 0 || progress == 1)
+                    {
+                        return progress;
+                    }
+                    return -Math.Pow(2, 10 * progress - 10) * Math.Sin((progress * 10 - 10.75) * elasticPeriod);
+                case HSpeedEasing.EaseOutElastic:
+                    if (progress == 0 || progress == 1)
+                    {
+                        return progress;
+                    }
+                    return Math.Pow(2, -10 * progress) * Math.Sin((progress * 10 - 0.75) * elasticPeriod) + 1;
+                case HSpeedEasing.EaseInOutElastic:
+                    if (progress == 0 || progress == 1)
+                    {
+                        return progress;
+                    }
+                    return progress < 0.5
+                        ? -(Math.Pow(2, 20 * progress - 10) * Math.Sin((20 * progress - 11.125) * elasticInOutPeriod)) / 2
+                        : Math.Pow(2, -20 * progress + 10) * Math.Sin((20 * progress - 11.125) * elasticInOutPeriod) / 2 + 1;
+                case HSpeedEasing.EaseInBounce:
+                    return 1 - ApplyHSpeedBounceOut(1 - progress);
+                case HSpeedEasing.EaseOutBounce:
+                    return ApplyHSpeedBounceOut(progress);
+                case HSpeedEasing.EaseInOutBounce:
+                    return progress < 0.5
+                        ? (1 - ApplyHSpeedBounceOut(1 - 2 * progress)) / 2
+                        : (1 + ApplyHSpeedBounceOut(2 * progress - 1)) / 2;
+                default:
+                    return progress;
+            }
+        }
+
+        static double ApplyHSpeedBounceOut(double progress)
+        {
+            const double bounceScale = 7.5625;
+            const double bounceDivisor = 2.75;
+            if (progress < 1 / bounceDivisor)
+            {
+                return bounceScale * progress * progress;
+            }
+            if (progress < 2 / bounceDivisor)
+            {
+                progress -= 1.5 / bounceDivisor;
+                return bounceScale * progress * progress + 0.75;
+            }
+            if (progress < 2.5 / bounceDivisor)
+            {
+                progress -= 2.25 / bounceDivisor;
+                return bounceScale * progress * progress + 0.9375;
+            }
+
+            progress -= 2.625 / bounceDivisor;
+            return bounceScale * progress * progress + 0.984375;
+        }
+
         static bool TryParseHSpeedValue(double bpm,
                                         ReadOnlySpan<char> body,
                                         List<HSpeedSegment> segments,
                                         out float hspeed,
                                         out bool hasInterpolation,
-                                        out HSpeedValueParseError parseError)
+                                        out HSpeedValueParseError parseError,
+                                        out string invalidEasing)
         {
             hspeed = default;
             hasInterpolation = false;
             parseError = HSpeedValueParseError.None;
+            invalidEasing = string.Empty;
             segments.Clear();
             body = body.Trim();
             if (body.IsEmpty)
@@ -1580,7 +1809,7 @@ namespace MajSimai
 
             if (body.IndexOf('~') == -1)
             {
-                if (TryParseHSpeedSegment(bpm, body, out var segment, out var segmentError))
+                if (TryParseHSpeedSegment(bpm, body, out var segment, out var segmentError, out invalidEasing))
                 {
                     segments.Add(segment);
                     hspeed = segment.TargetHSpeed;
@@ -1624,7 +1853,7 @@ namespace MajSimai
                     segmentStart += separatorIndex + 1;
                 }
 
-                if (!TryParseHSpeedSegment(bpm, segmentBody, out var segment, out var segmentError))
+                if (!TryParseHSpeedSegment(bpm, segmentBody, out var segment, out var segmentError, out invalidEasing))
                 {
                     segments.Clear();
                     parseError = segmentError;
@@ -1647,10 +1876,12 @@ namespace MajSimai
         static bool TryParseHSpeedSegment(double bpm,
                                           ReadOnlySpan<char> body,
                                           out HSpeedSegment segment,
-                                          out HSpeedValueParseError parseError)
+                                          out HSpeedValueParseError parseError,
+                                          out string invalidEasing)
         {
             segment = default;
             parseError = HSpeedValueParseError.None;
+            invalidEasing = string.Empty;
             body = body.Trim();
             if (body.IsEmpty)
             {
@@ -1662,7 +1893,6 @@ namespace MajSimai
             var durationEnd = body.IndexOf(']');
             if (durationStart <= 0 ||
                 durationEnd == -1 ||
-                durationEnd != body.Length - 1 ||
                 body[(durationEnd + 1)..].IndexOf(']') != -1)
             {
                 parseError = HSpeedValueParseError.Syntax;
@@ -1685,7 +1915,16 @@ namespace MajSimai
                 return false;
             }
 
-            segment = new HSpeedSegment(hspeed, duration);
+            var easingBody = body[(durationEnd + 1)..].Trim();
+            var easing = HSpeedEasing.Linear;
+            if (!easingBody.IsEmpty && !TryParseHSpeedEasing(easingBody, out easing))
+            {
+                invalidEasing = easingBody.ToString();
+                parseError = HSpeedValueParseError.UnknownEasing;
+                return false;
+            }
+
+            segment = new HSpeedSegment(hspeed, duration, easing);
             return true;
         }
 
@@ -1884,18 +2123,56 @@ namespace MajSimai
         {
             None,
             Syntax,
-            InvalidHSpeed
+            InvalidHSpeed,
+            UnknownEasing
+        }
+
+        enum HSpeedEasing
+        {
+            Linear,
+            EaseInQuad,
+            EaseOutQuad,
+            EaseInOutQuad,
+            EaseInCubic,
+            EaseOutCubic,
+            EaseInOutCubic,
+            EaseInQuart,
+            EaseOutQuart,
+            EaseInOutQuart,
+            EaseInQuint,
+            EaseOutQuint,
+            EaseInOutQuint,
+            EaseInSine,
+            EaseOutSine,
+            EaseInOutSine,
+            EaseInExpo,
+            EaseOutExpo,
+            EaseInOutExpo,
+            EaseInCirc,
+            EaseOutCirc,
+            EaseInOutCirc,
+            EaseInBack,
+            EaseOutBack,
+            EaseInOutBack,
+            EaseInElastic,
+            EaseOutElastic,
+            EaseInOutElastic,
+            EaseInBounce,
+            EaseOutBounce,
+            EaseInOutBounce
         }
 
         readonly struct HSpeedSegment
         {
             public float TargetHSpeed { get; }
             public double Duration { get; }
+            public HSpeedEasing Easing { get; }
 
-            public HSpeedSegment(float targetHSpeed, double duration)
+            public HSpeedSegment(float targetHSpeed, double duration, HSpeedEasing easing)
             {
                 TargetHSpeed = targetHSpeed;
                 Duration = duration;
+                Easing = easing;
             }
         }
 

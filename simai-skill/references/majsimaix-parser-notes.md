@@ -117,29 +117,50 @@ time. Full details are in `HS_Soflan_Reference.md`.
 - `g` is a non-negative integer (group number).
 - Group speeds are stored independently and can be referenced later.
 
-### 5.3 Linear interpolation
+### 5.3 Interpolation and easing
 
 ```
 <HS*2.0[8:1]>             interpolate to 2.0 over [8:1] duration
 <HS1*0.5[#1.25]>          group 1, interpolate over 1.25 seconds
 <HS2*3.0[150#4:1]>        group 2, custom BPM 150 for duration
+<HS*4[4:1]easeInOutCubic> full easing name
+<HS*4[4:1]ioCubic>        equivalent abbreviation
 ```
 
 - Duration reuses the Hold duration syntax: `[divide:count]`, `[#seconds]`,
   `[bpm#divide:count]`.
 - The interpolation spans from `nowTime - duration` to `nowTime`.
-- Sampling is aligned to the 384-grid at the current BPM, every 32 grids.
+- Sampling is aligned to the 384-grid at the current BPM. The interval is
+  controlled by `HSpeedInterpolationGrid` and defaults to every 32 grids.
+- The optional suffix is an easings.net easing name. Names and abbreviations
+  are case-insensitive. Omitting the suffix, or explicitly writing `linear`,
+  uses linear interpolation.
+- Full names use `easeInX`, `easeOutX`, or `easeInOutX`. Abbreviations use
+  `iX`, `oX`, or `ioX`. `X` may be `Quad`, `Cubic`, `Quart`, `Quint`, `Sine`,
+  `Expo`, `Circ`, `Back`, `Elastic`, or `Bounce`.
+- Whitespace and line breaks are allowed before or after the easing name, but
+  not inside it. Unknown names are syntax errors; easing cannot suffix an
+  instantaneous HS command.
+- Easing maps each sampled HSpeed progress value. `Back`, `Elastic`, and
+  `Bounce` retain their official overshoot/bounce behaviour; segment endpoints
+  remain exact.
 
 ### 5.4 Chain interpolation
 
 ```
 <HS*2.0[8:1]~1.0[4:1]>              two segments
 <HS*2.0[8:1]~1.0[4:1]~-0.5[#1.25]>  three segments
+<HS*2.0[8:1]ioCubic~1.0[4:1]oBounce> per-segment easing
 ```
 
-- Each segment is `targetHSpeed[duration]`, joined by `~`.
+- Each segment is `targetHSpeed[duration]easing`, joined by `~`.
+- Easing is selected independently per segment. A segment without a suffix is
+  linear and does not inherit the preceding segment's easing.
 - Negative and zero HSpeed values are allowed (e.g. `~-1[4:1]`).
 - No instantaneous segments allowed when `~` is present.
+- Easing is expanded into ordinary sampled HSpeed points during parsing. It is
+  not retained in `SimaiChart`, and MA2 export writes sampled `SFL` values, so
+  the original easing name cannot be reconstructed from parsed/exported data.
 
 ### 5.5 Group scope
 
