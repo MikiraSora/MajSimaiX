@@ -125,10 +125,19 @@ time. Full details are in `HS_Soflan_Reference.md`.
 <HS2*3.0[150#4:1]>        group 2, custom BPM 150 for duration
 <HS*4[4:1]easeInOutCubic> full easing name
 <HS*4[4:1]ioCubic>        equivalent abbreviation
+<HS*4[#0]>                 instantaneous segment at this boundary
 ```
 
 - Duration reuses the Hold duration syntax: `[divide:count]`, `[#seconds]`,
   `[bpm#divide:count]`.
+- HS speed and duration numbers use invariant culture with `.` as the decimal
+  separator.
+- Only absolute seconds may be exactly zero. `[#0]`, `[#0.0]`, `[#+0]`, and
+  `[#0e0]` assign the target speed instantaneously at the segment boundary;
+  the boundary itself uses the new speed. Ratio zero, negative zero, negative,
+  non-finite, and positive-underflow-to-zero durations are invalid.
+- Any HS command with a duration requires a valid preceding BPM declaration,
+  even when every segment is `[#0]`.
 - The interpolation spans from `nowTime - duration` to `nowTime`.
 - Sampling is aligned to the 384-grid at the current BPM. The interval is
   controlled by `HSpeedInterpolationGrid` and defaults to every 32 grids.
@@ -140,7 +149,8 @@ time. Full details are in `HS_Soflan_Reference.md`.
   `Expo`, `Circ`, `Back`, `Elastic`, or `Bounce`.
 - Whitespace and line breaks are allowed before or after the easing name, but
   not inside it. Unknown names are syntax errors; easing cannot suffix an
-  instantaneous HS command.
+  instantaneous HS command without a duration. A zero-duration segment may
+  retain any valid easing suffix, but the easing has no effect.
 - Easing maps each sampled HSpeed progress value. `Back`, `Elastic`, and
   `Bounce` retain their official overshoot/bounce behaviour; segment endpoints
   remain exact.
@@ -151,13 +161,27 @@ time. Full details are in `HS_Soflan_Reference.md`.
 <HS*2.0[8:1]~1.0[4:1]>              two segments
 <HS*2.0[8:1]~1.0[4:1]~-0.5[#1.25]>  three segments
 <HS*2.0[8:1]ioCubic~1.0[4:1]oBounce> per-segment easing
+<HS*2[#0]~4[#1]>                     jump to 2x, then interpolate to 4x
+<HS*2[#1]~4[#0]~8[#1]>               discontinuity between interpolations
 ```
 
 - Each segment is `targetHSpeed[duration]easing`, joined by `~`.
 - Easing is selected independently per segment. A segment without a suffix is
   linear and does not inherit the preceding segment's easing.
 - Negative and zero HSpeed values are allowed (e.g. `~-1[4:1]`).
-- No instantaneous segments allowed when `~` is present.
+- A `[#0]` segment executes from left to right at its boundary, breaks
+  interpolation continuity, and supplies the starting speed for the next
+  positive-duration segment. Consecutive zero segments use the last target.
+- Zero segments are valid at the start, middle, or end of a chain and as the
+  only segment. They create an empty boundary timing point and are independent
+  of `HSpeedInterpolationGrid`.
+- A chained segment may not omit its duration. Write `target[#0]` explicitly
+  for an instantaneous segment.
+- Positive durations such as `[#0.00000001]` remain real interpolation
+  durations and are not normalized to zero.
+- Same-group HS commands at one timestamp execute in source order; the last
+  command determines the speed for all notes and empty timing points at that
+  boundary.
 - Easing is expanded into ordinary sampled HSpeed points during parsing. It is
   not retained in `SimaiChart`, and MA2 export writes sampled `SFL` values, so
   the original easing name cannot be reconstructed from parsed/exported data.

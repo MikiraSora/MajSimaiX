@@ -109,19 +109,25 @@ protected float GetSoflanTiming() =>
 <HS2*3.0[150#4:1]>
 <HS*4[4:1]easeInOutCirc>
 <HS*4[4:1]ioCubic>
+<HS*4[#0]>
 ```
 
 - `duration` 复用 Hold 持续时间语法：
   - `[8:1]`：按当前 BPM 计算比例时值。
   - `[150#8:1]`：按指定 BPM 计算比例时值。
   - `[#1.25]`：直接指定秒数。
+- HS 的速度和 duration 数字统一按 invariant culture 解析，使用 `.` 作为小数点。
+- 只有绝对秒数形式允许真正的零时长：`[#0]`、`[#0.0]`、`[#+0]` 和 `[#0e0]` 都表示在该段边界瞬间切换到目标速度。边界时刻本身使用切换后的速度。
+- `[8:0]`、`[150#8:0]`、负零、负数、非有限值，以及正数下溢成 `0` 的 duration 仍然非法。
+- 使用 duration 的 HS 命令必须出现在有效 BPM 声明之后，即使所有段都是 `[#0]`；无 duration 的 `<HS*x>` 不受此限制。
 - 语义为：从 `nowTime - duration` 开始，将该 group 在起点时的有效 HSpeed 按指定 easing 插值到 `nowTime` 的目标速度 `x`。
-- `[duration]` 后可选写 easing。省略或显式写 `linear` 时使用线性插值；easing 只能用于带 duration 的插值段，不能附加到瞬时变速。
+- `[duration]` 后可选写 easing。省略或显式写 `linear` 时使用线性插值；零时长段允许保留任意合法 easing，但 easing 不产生效果。无 duration 的瞬时变速仍不能附加 easing。
 - easing 名称大小写不敏感，支持 easings.net 的完整名称：`easeInX`、`easeOutX`、`easeInOutX`；也支持对应缩写 `iX`、`oX`、`ioX`。
 - `X` 支持 `Quad`、`Cubic`、`Quart`、`Quint`、`Sine`、`Expo`、`Circ`、`Back`、`Elastic`、`Bounce`。例如 `easeInOutCirc` 等价于 `ioCirc`，`easeInOutCubic` 等价于 `ioCubic`。
 - easing 名称前后允许空白或换行，名称内部不允许空白或换行；未知名称会抛出包含原名称的 `InvalidSimaiSyntaxException`。
 - 解析阶段会展开为空 `noteContent` 的 `SimaiRawTimingPoint`，运行时把这些空点视为 HSpeed 变化点。
 - 插值采样按命令处当前 BPM 的 384-grid 对齐，间隔由 `HSpeedInterpolationGrid` 控制，默认每 32 grid 采样一次。
+- 零时长段不参与 interpolation grid 采样，只在自身边界生成一个空 HSpeed timing point，因此没有音符的边界也能被频谱显示和 MA2 导出观察到。
 - easing 只映射每个采样点的 HSpeed 进度：`speed = start + (target - start) * easing(progress)`；不改变采样时间、音频时间、判定时间或物件逻辑时间。
 - `Back`、`Elastic`、`Bounce` 保留 easings.net 的原始曲线特性；其中 `Back`、`Elastic` 允许中间采样值超出起点到目标值的范围，`Bounce` 保留回弹。起点和终点仍强制精确等于相应速度。
 - `startTime` 和 `nowTime` 保留真实时间；即使不落在 32-grid 上也会生成端点。
@@ -137,15 +143,22 @@ protected float GetSoflanTiming() =>
 <HS*2.0[8:1]~1.0[4:1]~-0.5[#1.25]>
 <HS1*0[4:1]~-1[4:1]>
 <HS*2.0[8:1]ioCubic~1.0[4:1]oBounce>
+<HS*2[#0]~4[#1]>
+<HS*2[#1]~4[#0]~8[#1]>
 ```
 
 - 使用 `~` 串联多个插值段，每一段都必须写成 `targetHSpeed[duration]easing`，其中 easing 后缀可省略。
 - 每段 easing 独立生效；某段省略 easing 时该段使用线性，不继承前一段。
 - 总时长为所有 `duration` 之和，整条曲线从 `nowTime - totalDuration` 开始，在 `nowTime` 到达最后一个目标速度。
 - 第一段从起点时的有效 HSpeed 渐变到第一个目标速度；后续每段从上一段目标速度渐变到下一段目标速度。
+- 零时长段按链中从左到右的顺序，在当前段边界立即赋值；它会切断插值连续性，并成为后续正时长段的起始速度。
+- 同一边界连续出现多个零时长段时，最后一个目标速度生效；链首、链中、链尾和只有一个 segment 的零时长段都合法。
 - 各段边界和 `nowTime` 都会强制生成采样点，即使边界不落在 interpolation grid 上。
 - 负数和 `0` HSpeed 允许，例如 `~-1[4:1]`。
-- 出现 `~` 时不允许瞬时段；`<HS*2~1[4:1]>` 和 `<HS*2[4:1]~1>` 都是非法语法。
+- 链中不能省略 duration；`<HS*2~1[4:1]>` 和 `<HS*2[4:1]~1>` 仍是非法语法，瞬时段必须显式写成 `targetHSpeed[#0]`。
+- `[#0.00000001]` 等有限正时长仍按真实插值处理，不会自动转换为瞬时段；小于等于内部同刻容差 `1e-9s` 的变化可能不可观察。
+- 同 group 同一时刻的 HS 命令按谱面文本顺序执行，后者覆盖前者；该时刻的音符和空 timing point 都使用执行完所有同刻命令后的最终速度。
+- 理论起点小于 `t=0` 时，仍先在完整理论时间轴执行零时长段；负时间采样点会被丢弃，但这些瞬时赋值会影响 `t=0` 的速度。
 - `<HS*2.0[8:1]>` 等价于只有一个 segment 的链式插值。
 - 链式插值允许不同段混用完整名称、缩写和默认线性。
 
@@ -558,7 +571,8 @@ ScaleStartTime = 810ms
 | 未定义 group 缺少速度值 | `<HS?>` | `InvalidSimaiSyntaxException` |
 | 未定义 group 缺少括号作用域 | `<HS?*1.5>` | `InvalidSimaiSyntaxException` |
 | HSpeed 非数字 | `<HS*abc>` | `InvalidSimaiMarkupException` |
-| 插值时长非法 | `<HS*2.0[8:0]>`, `<HS*2.0[#0]>` | `InvalidSimaiSyntaxException` |
+| 插值时长非法 | `<HS*2.0[8:0]>`, `<HS*2.0[150#8:0]>`, `<HS*2.0[#-0]>`, `<HS*2.0[#NaN]>` | `InvalidSimaiSyntaxException` |
+| duration 位于有效 BPM 之前 | `<HS*2.0[#0]>(120)` | `InvalidSimaiSyntaxException` |
 | 只有 group 却带时长 | `<HS1[8:1]>` | `InvalidSimaiSyntaxException` |
 | 未知 easing | `<HS1*2.0[8:1]ioCubci>` | `InvalidSimaiSyntaxException`: `Unknown HSpeed easing "ioCubci"` |
 | easing 用于瞬时变速 | `<HS1*2.0ioCubic>` | `InvalidSimaiMarkupException` |

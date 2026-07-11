@@ -76,6 +76,7 @@ MajSimai is an interpreter for [Simai](https://w.atwiki.jp/simai/), written in [
   - [x] Auto grouped `<HS?*float>(...)`
   - [x] Interpolation `<HS*float[duration]easing>` and `<HSg*float[duration]easing>`
   - [x] Per-segment chained interpolation `<HS*float[duration]easing~float[duration]easing>`
+  - [x] Instantaneous chain segments `<HS*float[#0]~float[duration]>`
 - [ ] EOF flag `E`
 
 ## Getting Started
