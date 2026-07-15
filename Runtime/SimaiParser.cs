@@ -1163,6 +1163,16 @@ namespace MajSimai
                                             else
                                             {
                                                 addHSpeedEvent(time, hsGroupNum, hsValue, commandOrder);
+                                                if (!hasGroup)
+                                                {
+                                                    // <HS*x> 全局瞬时命令：与显式 <HS0*x> 一致，在命令时刻补一个 group 0 的空 timing point。
+                                                    // 否则当该时刻没有音符承载 raw timing 时，速度恢复关键帧不会进入最终 timing point,
+                                                    // 运行时会把恢复推迟到下一颗音符,造成停车区间后的音符与停车起点音符重叠。
+                                                    // 事件已在上面通过 addHSpeedEvent 添加,这里只补 raw timing,避免重复添加事件。
+                                                    getTextPosition(i, out var Xcount, out var Ycount);
+                                                    ReadOnlySpan<char> noteContent = string.Empty;
+                                                    addRawTiming(time, noteContent, Xcount, Ycount, bpm, hsValue, i, hsGroupNum, commandOrder);
+                                                }
                                             }
                                         }
                                         else
