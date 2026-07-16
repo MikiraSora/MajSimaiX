@@ -26,17 +26,28 @@ namespace MajSimai
             RawTextPosition = textPos;
             if (!rawContent.IsEmpty)
             {
-                if (rawContent.Contains('@') && !IsFixedSoflanModifierSpacingValid(rawContent))
+                Span<char> rCSpan = stackalloc char[rawContent.Length];
+                var contentLength = 0;
+                for (var i = 0; i < rawContent.Length; i++)
+                {
+                    var current = rawContent[i];
+                    if (current == 'c')
+                    {
+                        continue;
+                    }
+                    rCSpan[contentLength++] = current == '\n' ? ' ' : current;
+                }
+
+                var normalizedContent = rCSpan.Slice(0, contentLength);
+                if (normalizedContent.Contains('@') && !IsFixedSoflanModifierSpacingValid(normalizedContent))
                 {
                     throw new InvalidSimaiSyntaxException(textPosY, textPosX, rawContent.ToString(), "Invalid FixedSoflan modifier");
                 }
 
-                Span<char> rCSpan = stackalloc char[rawContent.Length];
-                rawContent.Replace(rCSpan, '\n', ' ');
                 var i2 = 0;
-                for (var i = 0; i < rCSpan.Length; i++)
+                for (var i = 0; i < normalizedContent.Length; i++)
                 {
-                    var current = rCSpan[i];
+                    var current = normalizedContent[i];
                     if (char.IsWhiteSpace(current))
                     {
                         continue;
@@ -46,15 +57,7 @@ namespace MajSimai
                         rCSpan[i2++] = current;
                     }
                 }
-                var newRaw = rCSpan.Slice(0, i2);
-                if (newRaw != rawContent)
-                {
-                    RawContent = new string(rCSpan.Slice(0, i2));
-                }
-                else
-                {
-                    RawContent = rawContent.ToString();
-                }
+                RawContent = new string(rCSpan.Slice(0, i2));
             }
             else
             {

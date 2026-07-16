@@ -1025,15 +1025,18 @@ namespace MajSimai
                                 //Console.WriteLine("BEAT" + beats);
                             }
                             continue;
-                        case '<':// Get HS: <HS*1.0>
+                        case '<':// Get HS/SV: <HS*1.0>, <SV*1.0>
                             {
                                 var isHSpeedTag = IsHSpeedTagStart(fumen, i);
-                                if (insideHsGroup && isHSpeedTag)
+                                var isSVTag = IsSVTagStart(fumen, i);
+                                var isSpeedTag = isHSpeedTag || isSVTag;
+                                if (insideHsGroup && isSpeedTag)
                                 {
                                     getTextPosition(i, out var Xcount, out var Ycount);
-                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[i].ToString(), "HS declaration is not allowed inside HS group scope");
+                                    var declarationName = isSVTag ? "SV" : "HS";
+                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[i].ToString(), $"{declarationName} declaration is not allowed inside HS group scope");
                                 }
-                                if (haveNote && !isHSpeedTag)
+                                if (haveNote && !isSpeedTag)
                                 {
                                     break;
                                 }
@@ -1045,7 +1048,107 @@ namespace MajSimai
                                 //noteTemp = "";
                                 noteContentBufIndex = 0;
 
-                                if (fumen[i..].Length >= 4) // <HS*x>
+                                if (isSVTag)
+                                {
+                                    var startAt = i + 1;
+                                    var buffer = ArrayPool<char>.Shared.Rent(16);
+                                    var bufferIndex = 0;
+                                    var starIndex = -1;
+                                    i++;
+                                    try
+                                    {
+                                        for (; i < fumen.Length; i++)
+                                        {
+                                            ref readonly var currentChar = ref fumen[i];
+                                            if (currentChar == '\n')
+                                            {
+                                                continue;
+                                            }
+                                            if (currentChar == '*')
+                                            {
+                                                if (starIndex != -1)
+                                                {
+                                                    getTextPosition(i, out var Xcount, out var Ycount);
+                                                    throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[(startAt - 1)..(i + 1)].ToString(), "Unexpected SV declaration syntax");
+                                                }
+                                                starIndex = bufferIndex;
+                                            }
+                                            else if (currentChar == '>')
+                                            {
+                                                break;
+                                            }
+                                            BufferHelper.EnsureBufferLength(bufferIndex + 1, ref buffer);
+                                            buffer[bufferIndex++] = currentChar;
+                                        }
+
+                                        if (i >= fumen.Length || fumen[i] != '>')
+                                        {
+                                            getTextPosition(Math.Min(i, fumen.Length), out var Xcount, out var Ycount);
+                                            throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[(startAt - 1)..Math.Min(i + 1, fumen.Length)].ToString(), "Unexpected SV declaration syntax");
+                                        }
+
+                                        var svContent = buffer.AsSpan(0, bufferIndex);
+                                        if (svContent.Length < 3 ||
+                                            svContent[0] != 'S' ||
+                                            svContent[1] != 'V' ||
+                                            starIndex != 2)
+                                        {
+                                            getTextPosition(i, out var Xcount, out var Ycount);
+                                            throw new InvalidSimaiSyntaxException(Ycount, Xcount, svContent.ToString(), "Unexpected SV declaration syntax");
+                                        }
+
+                                        var valueBody = svContent[(starIndex + 1)..].Trim();
+                                        if (valueBody.IsEmpty ||
+                                            valueBody.IndexOf('[') != -1 ||
+                                            valueBody.IndexOf(']') != -1 ||
+                                            valueBody.IndexOf('~') != -1)
+                                        {
+                                            getTextPosition(i, out var Xcount, out var Ycount);
+                                            throw new InvalidSimaiSyntaxException(Ycount, Xcount, svContent.ToString(), "SV only supports instantaneous <SV*number> declarations");
+                                        }
+                                        if (!float.TryParse(valueBody, NumberStyles.Float, CultureInfo.InvariantCulture, out var svValue))
+                                        {
+                                            getTextPosition(i, out var Xcount, out var Ycount);
+                                            throw new InvalidSimaiMarkupException(Ycount, Xcount, svContent.ToString(), "HSpeed value must be a number");
+                                        }
+
+                                        // A following parenthesis may still be the ordinary BPM declaration;
+                                        // only note-like bodies are rejected as an SV group scope.
+                                        var nextIdx = i + 1;
+                                        while (nextIdx < fumen.Length && char.IsWhiteSpace(fumen[nextIdx]))
+                                        {
+                                            nextIdx++;
+                                        }
+                                        if (nextIdx < fumen.Length && fumen[nextIdx] == '(')
+                                        {
+                                            var closeOffset = fumen[nextIdx..].IndexOf(')');
+                                            var hasBpmBody = closeOffset > 0 &&
+                                                             IsStrictBpmLiteral(fumen[(nextIdx + 1)..(nextIdx + closeOffset)]);
+                                            if (!hasBpmBody)
+                                            {
+                                                getTextPosition(nextIdx, out var Xcount, out var Ycount);
+                                                throw new InvalidSimaiSyntaxException(Ycount, Xcount, svContent.ToString(), "SV does not support group scope");
+                                            }
+                                        }
+
+                                        if (nextIdx < fumen.Length && fumen[nextIdx] == '`')
+                                        {
+                                            i = nextIdx;
+                                        }
+
+                                        var commandOrder = nextTimingOrder();
+                                        curHSpeed = svValue;
+                                        addHSpeedEvent(time, 0, svValue, commandOrder);
+                                        getTextPosition(i, out var speedXcount, out var speedYcount);
+                                        ReadOnlySpan<char> noteContent = string.Empty;
+                                        addRawTiming(time, noteContent, speedXcount, speedYcount, bpm, svValue, i, 0, commandOrder);
+                                    }
+                                    finally
+                                    {
+                                        ArrayPool<char>.Shared.Return(buffer);
+                                    }
+                                }
+                                else if (fumen[i..].Length >= 4) // <HS*x>
                                 {
                                     var startAt = i + 1;
                                     var buffer = ArrayPool<char>.Shared.Rent(16);
@@ -1076,6 +1179,11 @@ namespace MajSimai
                                             }
                                             BufferHelper.EnsureBufferLength(bufferIndex + 1, ref buffer);
                                             buffer[bufferIndex++] = currentChar;
+                                        }
+                                        if (i >= fumen.Length || fumen[i] != '>')
+                                        {
+                                            getTextPosition(Math.Min(i, fumen.Length), out var Xcount, out var Ycount);
+                                            throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[(startAt - 1)..Math.Min(i + 1, fumen.Length)].ToString(), "Unexpected HS declaration syntax");
                                         }
                                         if (HasLineBreakInsideHSpeedEasingName(fumen[startAt..i]))
                                         {
@@ -1149,9 +1257,9 @@ namespace MajSimai
                                             {
                                                 hsGroupSpeeds[hsGroupNum] = hsValue;
                                             }
-                                            else
+                                            if (hsGroupNum == 0)
                                             {
-                                                // <HS*x> - 旧语法，设置默认组速度
+                                                // <HS*x> 和 <HS0*x> 共用默认 group 0 的当前速度。
                                                 curHSpeed = hsValue;
                                             }
 
@@ -1586,6 +1694,16 @@ namespace MajSimai
 
         static bool IsHSpeedTagStart(ReadOnlySpan<char> fumen, int index)
         {
+            return IsSpeedTagStart(fumen, index, 'H', 'S');
+        }
+
+        static bool IsSVTagStart(ReadOnlySpan<char> fumen, int index)
+        {
+            return IsSpeedTagStart(fumen, index, 'S', 'V');
+        }
+
+        static bool IsSpeedTagStart(ReadOnlySpan<char> fumen, int index, char first, char second)
+        {
             if (index < 0 || index >= fumen.Length || fumen[index] != '<')
             {
                 return false;
@@ -1597,7 +1715,18 @@ namespace MajSimai
                 index++;
             }
 
-            return index + 1 < fumen.Length && fumen[index] == 'H' && fumen[index + 1] == 'S';
+            return index + 1 < fumen.Length && fumen[index] == first && fumen[index + 1] == second;
+        }
+
+        static bool IsStrictBpmLiteral(ReadOnlySpan<char> body)
+        {
+            body = body.Trim();
+            if (body.IsEmpty || body.IndexOf(',') >= 0)
+            {
+                return false;
+            }
+
+            return float.TryParse(body, NumberStyles.Float, CultureInfo.InvariantCulture, out _);
         }
 
         static void AddUniqueTime(List<double> timings, double timing)

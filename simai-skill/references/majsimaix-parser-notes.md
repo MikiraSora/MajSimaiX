@@ -107,7 +107,44 @@ time. Full details are in `HS_Soflan_Reference.md`.
 <HS*0.5>       half speed
 ```
 
-### 5.2 Grouped instantaneous
+### 5.2 SV compatibility tag
+
+```text
+<SV*2>       group 0 HSpeed = 2
+<SV*0>       stop the visual timeline
+<SV*-1>      reverse the visual timeline
+<SV*1>       explicitly restore the default speed
+```
+
+- Only uppercase `SV` is accepted, and only the instantaneous `<SV*number>` form.
+- The numeric grammar is the same as instantaneous HS: invariant-culture float
+  parsing, including zero, negative values, a leading plus sign, exponents, and
+  the special values accepted by HS (`NaN`/`Infinity`).
+- SV is normalized to a group `0` `HSpeedEvent` plus an empty timing point. It
+  does not maintain an SV multiplier or an `SVeloc` field; `CommaTimings.HSpeed`
+  remains `1`.
+- `<SV*x>`, `<HS*x>`, and `<HS0*x>` share the group `0` timeline. At one actual
+  timestamp the last declaration in source order wins, and the value persists
+  until the next group `0` HS/SV declaration. Nonzero HS groups remain separate.
+- A tag may occur before or after a note and applies to `/` each notes in that
+  timing. Fake-each items query the event timeline at their expanded timing, so
+  an item crossing into the next comma slot can see a later HS/SV command.
+- Group prefixes, `?` groups, note scopes, durations, `~` chains, and easing
+  are invalid for SV and raise `InvalidSimaiSyntaxException`; invalid numeric
+  literals use the HS `InvalidSimaiMarkupException` boundary. Tags must close
+  with `>`; a following `(120)` remains an ordinary BPM declaration.
+
+SV error matrix:
+
+| Input | Result |
+| --- | --- |
+| `<SV*>`, `<SV**2>`, `<SV1*2>`, `<SV?>` | `InvalidSimaiSyntaxException` |
+| `<SV*abc>` | `InvalidSimaiMarkupException` |
+| `<SV*2[4:1]>`, `<SV*2~1>`, `<SV*2[4:1]ioCubic>` | `InvalidSimaiSyntaxException` |
+| `<SV*2>(1,)` or SV inside `<HS1>(...)` | `InvalidSimaiSyntaxException` |
+| `<SV*2` | `InvalidSimaiSyntaxException` |
+
+### 5.3 Grouped instantaneous
 
 ```
 <HS1*2.0>      group 1 speed = 2.0
@@ -117,7 +154,7 @@ time. Full details are in `HS_Soflan_Reference.md`.
 - `g` is a non-negative integer (group number).
 - Group speeds are stored independently and can be referenced later.
 
-### 5.3 Interpolation and easing
+### 5.4 Interpolation and easing
 
 ```
 <HS*2.0[8:1]>             interpolate to 2.0 over [8:1] duration
@@ -155,7 +192,7 @@ time. Full details are in `HS_Soflan_Reference.md`.
   `Bounce` retain their official overshoot/bounce behaviour; segment endpoints
   remain exact.
 
-### 5.4 Chain interpolation
+### 5.5 Chain interpolation
 
 ```
 <HS*2.0[8:1]~1.0[4:1]>              two segments
@@ -186,7 +223,7 @@ time. Full details are in `HS_Soflan_Reference.md`.
   not retained in `SimaiChart`, and MA2 export writes sampled `SFL` values, so
   the original easing name cannot be reconstructed from parsed/exported data.
 
-### 5.5 Group scope
+### 5.6 Group scope
 
 ```
 <HS1*2.0>(1,2,3,4),     notes inside () belong to group 1
@@ -196,7 +233,15 @@ time. Full details are in `HS_Soflan_Reference.md`.
 
 - All notes inside `()` belong to the specified group.
 - After `)`, the group scope exits and returns to group 0.
-- HS declarations are **not allowed** inside the group scope.
+- HS and SV declarations are **not allowed** inside the group scope.
+
+### 5.7 Raw note normalization
+
+Before FixedSoflan `@` validation and note flag detection, the parser removes
+lowercase `c` from raw note content. Therefore `1c`, `1-3[8:1]c`, and
+`1c@600-3[8:1]` are equivalent to their forms without `c`, and both timing and
+note `RawContent` contain no lowercase `c`. Uppercase `C` remains the centre
+Touch marker.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: simai-skill
-description: Read, write, inspect, and fix simai / maidata 谱面 chart syntax for the MajSimaiX parser. Covers metadata (&title, &artist, &first, &des, &lv, &inote), timing ((bpm), {n}, {#seconds}, commas), every note type (tap, break, EX, mine, force star, hold, slide, touch, touch hold, each), slide marks, durations, HS/Soflan, and FixedSoflan. Use this skill when writing or editing simai note lines, fixing maidata parse errors, or verifying MajSimaiX parser compatibility.
+description: Read, write, inspect, and fix simai / maidata 谱面 chart syntax for the MajSimaiX parser. Covers metadata (&title, &artist, &first, &des, &lv, &inote), timing ((bpm), {n}, {#seconds}, commas), every note type (tap, break, EX, mine, force star, hold, slide, touch, touch hold, each), slide marks, durations, HS/SV Soflan, lowercase c normalization, and FixedSoflan. Use this skill when writing or editing simai note lines, fixing maidata parse errors, or verifying MajSimaiX parser compatibility.
 ---
 
 # Simai Skill
