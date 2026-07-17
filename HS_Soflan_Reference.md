@@ -590,6 +590,29 @@ ScaleStartTime = 810ms
 - 内部组 `-2` 映射到 MA2 group `11`
 - `2@600` 会随所在自动组导出为 `#10F600`
 
+### 示例 7：Mine 与 MA2 Soflan 尾块共存
+
+MajdataEdit 使用私有 `!m` 修饰符在 MA2 物件记录中保留 Mine 语义。`!m` 与
+`#groupFspeed` 位于同一个制表符分隔的尾字段中，二者相对顺序不构成语义：
+
+```text
+!m
+!m#12
+!m#F600
+!m#12F600
+#12F600!m
+```
+
+MajdataEdit 规范输出把 `!m` 放在 `#` 前；读取方必须同时接受 `!m#12F600` 和
+`#12F600!m`。实现读取器时，应先识别并移除一次精确的小写 `!m`，再按原有规则解析
+`#groupFspeed`，不能依赖修饰符顺序。
+
+- Tap、Hold、Touch、TouchHold 和 Slide 星头按 `IsMine` 标记。
+- Slide/Wifi 轨迹按 `IsMineSlide` 标记；星头与轨迹不会互相传播。
+- 无头 Slide 只生成轨迹标记。
+- 连接 Slide 沿用当前 `SimaiNote` 粒度，拆出的轨迹记录共享 `IsMineSlide`。
+- `!m` 不创建新 MA2 物件 ID，也不改变 MA2 汇总统计。
+
 ---
 
 ## 八、错误处理

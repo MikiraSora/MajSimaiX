@@ -1,3 +1,4 @@
-display_name: "Simai Skill"
-short_description: "Read and write simai maidata chart syntax."
-default_prompt: "Use $simai-skill to write, inspect, or fix simai maidata chart syntax for MajSimaiX."
+interface:
+  display_name: "Simai / MA2 Skill"
+  short_description: "Inspect simai syntax and Majdata MA2 export markers."
+  default_prompt: "Use $simai-skill to inspect or fix simai maidata syntax and its Majdata MA2 export markers."
