@@ -1,6 +1,6 @@
 ---
 name: simai-skill
-description: Read, write, inspect, and fix simai / maidata 谱面 chart syntax for the MajSimaiX parser. Covers metadata (&title, &artist, &first, &des, &lv, &inote), timing ((bpm), {n}, {#seconds}, commas), every note type (tap, break, EX, mine, force star, hold, slide, touch, touch hold, each), slide marks, durations, HS/SV Soflan, lowercase c normalization, and FixedSoflan. Use this skill when writing or editing simai note lines, fixing maidata parse errors, or verifying MajSimaiX parser compatibility.
+description: Read, write, inspect, and fix simai / maidata chart syntax for MajSimaiX, and inspect MajdataEdit MA2 export conventions. Covers metadata, timing, every note type including Mine, slides, HS/SV Soflan, lowercase c normalization, FixedSoflan, and MA2 tail markers such as !m and #groupFspeed. Use when editing simai notes, fixing maidata parse errors, verifying parser compatibility, or reasoning about simai-to-MA2 output.
 ---
 
 # Simai Skill
@@ -25,7 +25,9 @@ Use this skill when you need to:
    `@`, force star `$`, wifi slides, same-head slides, no-head slides), or you
    need to know what the parser actually accepts versus standard simai, read
    `references/majsimaix-parser-notes.md`.
-3. Always prefer syntax that the MajSimaiX parser accepts. Standard simai wiki
+3. If the task involves MajdataEdit MA2 generation, Mine `!m`, note `#group`
+   markers, or FixedSoflan MA2 tails, read `references/ma2-export.md`.
+4. Always prefer syntax that the MajSimaiX parser accepts. Standard simai wiki
    syntax may include forms MajSimaiX does not support (for example the `E` EOF
    flag is not implemented).
 
@@ -36,3 +38,5 @@ Use this skill when you need to:
 - [majsimaix-parser-notes.md](references/majsimaix-parser-notes.md) —
   MajSimaiX parser specifics: slide marks, same-head / conn / no-head slides,
   HS/Soflan, FixedSoflan, and differences from standard simai.
+- [ma2-export.md](references/ma2-export.md) — MajdataEdit MA2 export mapping,
+  Mine `!m`, Soflan group, and FixedSoflan tail-field rules.
