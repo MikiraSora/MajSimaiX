@@ -5,7 +5,7 @@ VisualStudioVersion = 17.12.35514.174 d17.12
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MajSimai", "MajSimai.csproj", "{75FDD895-28A6-4F6F-8CAD-8B9DB6F41617}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MajSimai.SVValidation", "Validation\MajSimai.SVValidation.csproj", "{A1D7E4B0-5C10-4F4E-B6F2-8D0A15E8D0A1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MajSimai.SVValidation", "Validation~\MajSimai.SVValidation.csproj", "{A1D7E4B0-5C10-4F4E-B6F2-8D0A15E8D0A1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
