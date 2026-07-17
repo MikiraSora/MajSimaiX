@@ -21,9 +21,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Validation\**" />
-    <EmbeddedResource Remove="Validation\**" />
-    <None Remove="Validation\**" />
+    <Compile Remove="Validation~\**" />
+    <EmbeddedResource Remove="Validation~\**" />
+    <None Remove="Validation~\**" />
   </ItemGroup>
 
   <ItemGroup>
