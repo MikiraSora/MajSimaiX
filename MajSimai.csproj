@@ -21,8 +21,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="bin\**" />
+    <Compile Remove="obj\**" />
     <Compile Remove="Validation~\**" />
+    <EmbeddedResource Remove="bin\**" />
+    <EmbeddedResource Remove="obj\**" />
     <EmbeddedResource Remove="Validation~\**" />
+    <None Remove="bin\**" />
+    <None Remove="obj\**" />
     <None Remove="Validation~\**" />
   </ItemGroup>
 
