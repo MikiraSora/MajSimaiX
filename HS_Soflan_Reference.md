@@ -37,13 +37,25 @@ public int SoflanGroup { get; } = 0;
 
 ```csharp
 public int SoflanGroup { get; set; } = 0;
+public int SlideSoflanGroup { get; set; } // 未显式设置时继承 SoflanGroup
 public bool IsFixedSoflan { get; set; }
 public bool HasFixedSoflanSpeed { get; set; }
 public float FixedSoflanSpeed { get; set; } = DefaultFixedSoflanSpeed;
 public const float DefaultFixedSoflanSpeed = 600f;
 ```
 
-解析后 `SimaiRawTimingPoint.GetTimingPoint()` 会把当前 timing 的 `SoflanGroup` 传给 `SimaiNoteParser.GetNotes(...)`。当 group 非 `0` 时，该 timing 下解析出的每个 note 都会写入相同的 `SimaiNote.SoflanGroup`。
+解析后 `SimaiRawTimingPoint.GetTimingPoint()` 会把当前 timing 的 `SoflanGroup` 传给 `SimaiNoteParser.GetNotes(...)`。当 group 非 `0` 时，该 timing 下解析出的每个 note 都会写入相同的 `SimaiNote.SoflanGroup`。对于 Slide，`SoflanGroup` 表示星头分组，`SlideSoflanGroup` 表示整条轨迹（包括连接段和 same-head 分支）的分组。未显式拆分时，`SlideSoflanGroup` 继承 `SoflanGroup`。
+
+| 写法 | 星头 `SoflanGroup` | 轨迹 `SlideSoflanGroup` |
+| --- | ---: | ---: |
+| `<HS44>(1-3[4:1]V57[5:1])` | `44` | `44` |
+| `<HS44>(1)-3[4:1]V57[5:1]` | `44` | `0` |
+
+### Native AOT ABI
+
+Native AOT 的 `UnmanagedSimaiNote.slideSoflanGroup` 在 x64 布局中复用 `rawContentLen` 与 `rawContent` 指针之间原有的 4 字节对齐 padding。因此 x64 下结构大小仍为 64 字节，`rawContentLen`、`slideSoflanGroup`、`rawContent` 的偏移分别为 48、52、56。
+
+该兼容保证和当前 native 构建示例仅覆盖 x64。32 位布局没有同一段指针对齐 padding，加入 `slideSoflanGroup` 后不保证与旧版 native ABI 二进制兼容；32 位调用方不得照搬 x64 结构布局。
 
 ### 运行时转换
 
@@ -194,11 +206,19 @@ protected float GetSoflanTiming() =>
 <HS2*2.0>(1,2,3,4),
 <HS1>(5,6,7,8),
 <HS1*1.5[8:1]>(1,2,3,4),
+<HS2*2.0>(1)-3[4:1],
+<HS2*2.0>(1,2)-4[4:1],
+<HS45*2.5>(1-3[4:1]V57[5:1]),
 ```
 
 - 括号 `()` 内的所有音符属于指定 Soflan group。
 - 括号结束后自动退出分组模式，回到默认 group `0`。
 - 括号内可包含逗号分隔的多个拍位。
+- 把完整 Slide 放在作用域内时，例如 `<HS45*2.5>(1-3[4:1]V57[5:1])`，星头和所有轨迹段都属于 group `45`。
+- 当作用域只包住一个 Slide 星头且 `)` 后紧接 slide mark 时，例如 `<HS2>(1)-3[4:1]`，只有星头属于 group `2`，轨迹仍属于作用域外的默认 group `0`。`)` 与 slide mark 之间允许空白。
+- head-only 特例要求闭括号前的最后一个音符是单个可构成 Slide 的星头；括号内更早的逗号分隔音符仍可正常保留在该 HS group 中。例如 `<HS2>(1,2)-4[4:1]` 合法，`1` 和星头 `2` 属于 group `2`，但轨迹属于 group `0`。最后一个音符不能与 `/` each、反引号 fake-each 混用，也不能只包住连接 Slide 的前半段，例如 `<HS2>(1/2)-4[4:1]`、``<HS2>(1`2)-4[4:1]``、`<HS2>(1-4[4:1])-6[4:1]` 均非法。
+- Slide path 内不能嵌入 HS 声明；例如 `1-<HS44>(2[4:1])V<HS30>(35[5:1])` 不受支持。需要变速时，应选择“完整 Slide 同组”或“仅星头分组”两种作用域写法。
+- `@` FixedSoflan 即使与 head-only 作用域组合，也仍只修饰星头；它不会把 FixedSoflan 或星头 group 传播到 Slide body。
 - 括号作用域内不支持再写任何 HS 声明，遇到会抛出 `InvalidSimaiSyntaxException`。
 - 括号作用域内也不支持 SV 声明。
 
@@ -383,7 +403,7 @@ simaiNote.FixedSoflanSpeed = fixedSoflanSpeed;
 
 ## 五、MajdataView 物件 Soflan 支持矩阵
 
-下表描述的是当前主工程 `Assets/Scripts` 的运行时行为。解析器能把 `SoflanGroup` 和 `FixedSoflan` 字段写入 note，不代表对应 Unity 组件一定会使用 Soflan 时间轴显示。
+下表描述的是当前主工程 `Assets/Scripts` 的运行时行为。解析器能把 `SoflanGroup`、`SlideSoflanGroup` 和 `FixedSoflan` 字段写入 note，MajdataEdit 也能按这两个 group 分别导出 Slide 星头与 body 的 MA2 标记，但这不代表对应 Unity 组件一定会使用 Soflan 时间轴显示。当前捆绑的 MajdataView `SlideDrop` / `WifiDrop` 尚不读取 `SlideSoflanGroup`，因此上述 body 分组是解析与导出契约，不是对预览运行时 body 动画变速支持的声明。
 
 | 物件 / 组件 | Soflan 时间轴显示 | FixedSoflan | 运行时依据 |
 | --- | --- | --- | --- |
@@ -400,7 +420,7 @@ simaiNote.FixedSoflanSpeed = fixedSoflanSpeed;
 
 关键边界：
 
-- SlideDrop / WifiDrop 不应受 SoflanTiming 影响。只有它们的星星头可以受 Soflan / FixedSoflan 影响。
+- 当前 SlideDrop / WifiDrop 不受 SoflanTiming 影响。只有它们的星星头可以受 Soflan / FixedSoflan 影响。
 - `StarDrop.Update_soflan()` 激活 slide body 时使用 `GetTapScale(GetJudgeTiming()) >= 1f`，即真实音频 timing 的普通 Tap scale，而不是 Soflan timing。这用于保证 slide body 出现时机不被 Soflan 时间轴改变。
 - Touch / TouchHold 的 `Update_soflan()` 使用 Soflan timing 计算风扇位移和显示；判定仍使用真实 `AudioTime - time`，不受 HS 影响。
 - 判定统一不受 Soflan 影响；各物件判定仍使用真实音频时间。
@@ -637,6 +657,9 @@ MajdataEdit 规范输出把 `!m` 放在 `#` 前；读取方必须同时接受 `!
 | easing 用于瞬时变速 | `<HS1*2.0ioCubic>` | `InvalidSimaiMarkupException` |
 | easing 名称内部含空白或换行 | `<HS1*2.0[8:1]io Cubic>` | `InvalidSimaiSyntaxException` |
 | 分组作用域内声明 HS/SV | `<HS1>(<HS1*2.0>1,)`, `<HS1>(<SV*2>1,)` | `InvalidSimaiSyntaxException` |
+| head-only Slide 与 each / fake-each 混用 | `<HS1>(1/2)-3[4:1]`, ``<HS1>(1`2)-3[4:1]`` | `InvalidSimaiSyntaxException` |
+| 只包裹部分 Slide path | `<HS1>(1-3[4:1])-5[4:1]` | `InvalidSimaiSyntaxException` |
+| Slide path 内嵌 HS | `1-<HS44>(2[4:1])V<HS30>(35[5:1])` | `InvalidSimaiSyntaxException` |
 | 变速标签未闭合 | `<SV*2`, `<HS*2` | `InvalidSimaiSyntaxException` |
 | lowercase `c` | `1c`, `1-3[8:1]c` | 在 raw timing/note RawContent 中移除，等价于去掉 `c` |
 | `<` 后内容不足 | `<H>` | `InvalidSimaiMarkupException` |
@@ -653,9 +676,10 @@ MajdataEdit 规范输出把 `!m` 放在 `#` 前；读取方必须同时接受 `!
 MajSimaiX 解析层：
 
 - `Runtime/SimaiParser.cs`：`<HS...>`/`<SV*x>` 标签、group 作用域、插值采样、最终 HSpeed 事件合并。
-- `Runtime/SimaiRawTimingPoint.cs`：lowercase `c` 规范化、raw content 空白处理、FixedSoflan `@` 空白规则、`SoflanGroup` 传递。
-- `Runtime/SimaiNoteParser.cs`：note 解析、`@` 修饰符、FixedSoflan 字段写入、slide star head 限制。
-- `Runtime/SimaiNote.cs`：`SoflanGroup`、`IsFixedSoflan`、`HasFixedSoflanSpeed`、`FixedSoflanSpeed` 数据字段。
+- `Runtime/SimaiRawTimingPoint.cs`：lowercase `c` 规范化、raw content 空白处理、FixedSoflan `@` 空白规则、`SoflanGroup` / `SlideSoflanGroup` 传递。
+- `Runtime/SimaiNoteParser.cs`：note 解析、星头/body group 写入、`@` 修饰符、FixedSoflan 字段写入、slide star head 限制。
+- `Runtime/SimaiNote.cs`：`SoflanGroup`、`SlideSoflanGroup`、`IsFixedSoflan`、`HasFixedSoflanSpeed`、`FixedSoflanSpeed` 数据字段。
+- `Runtime/Unmanaged/UnmanagedSimaiNote.cs`：Native AOT note 布局；x64 下用既有 padding 保存 `slideSoflanGroup`。
 
 MajdataView 运行时：
 

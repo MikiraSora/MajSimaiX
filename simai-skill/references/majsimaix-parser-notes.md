@@ -229,9 +229,14 @@ SV error matrix:
 <HS1*2.0>(1,2,3,4),     notes inside () belong to group 1
 <HS1>(1,2,),            reuse previously declared group 1 speed
 <HS1*1.5[8:1]>(1,2,3,4) group 1 with interpolation, then scope
+<HS1*2.0>(1)-3[4:1]     only the slide star head belongs to group 1
 ```
 
 - All notes inside `()` belong to the specified group.
+- If the scope contains only a Slide star head and a slide mark follows `)`, the parser keeps one Slide note but assigns the body to the outside group. For example, `<HS1>(1)-3[4:1]` gives the star head group `1` and the body group `0`.
+- Put the complete Slide inside the scope, as in `<HS1>(1-3[4:1])`, when both the star head and body should use group `1`.
+- The head-only form requires the final note before `)` to be one valid star head. Earlier comma-separated notes in the scope remain valid and keep the HS group, for example `<HS1>(1,2)-4[4:1]`; only the Slide body is assigned to group `0`. The final head still cannot use `/` each, backtick fake-each, or a scope that contains only part of a connected Slide path.
+- HS/SV declarations embedded inside a Slide path are unsupported; keep the declaration outside the Slide or scope the complete Slide.
 - After `)`, the group scope exits and returns to group 0.
 - HS and SV declarations are **not allowed** inside the group scope.
 
@@ -343,8 +348,8 @@ omits a few features. When in doubt, use MajSimaiX syntax.
 |------|----------------|
 | `Runtime/SimaiParser.cs` | File/metadata parsing, chart timing loop, `<HS>` tags, group scope, interpolation, comma/fake-each timing. |
 | `Runtime/SimaiNoteParser.cs` | Note-level parsing: flags, holds, slides, same-head, touch, FixedSoflan `@`. |
-| `Runtime/SimaiRawTimingPoint.cs` | Raw timing content, FixedSoflan `@` whitespace validation, SoflanGroup propagation. |
-| `Runtime/SimaiNote.cs` | Note data model (type, position, flags, SoflanGroup, FixedSoflan fields). |
+| `Runtime/SimaiRawTimingPoint.cs` | Raw timing content, FixedSoflan `@` whitespace validation, `SoflanGroup` / `SlideSoflanGroup` propagation. |
+| `Runtime/SimaiNote.cs` | Note data model (type, position, flags, `SoflanGroup` / `SlideSoflanGroup`, FixedSoflan fields). |
 | `Runtime/SimaiTimingPoint.cs` | Timing point data model (timing, BPM, HSpeed, SoflanGroup, notes). |
 | `Runtime/SimaiMetadata.cs` | Metadata data model (title, artist, offset, designers, levels, fumens, commands). |
 | `HS_Soflan_Reference.md` | Full HS/Soflan and FixedSoflan reference with runtime support matrix. |

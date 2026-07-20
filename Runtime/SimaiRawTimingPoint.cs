@@ -12,13 +12,14 @@ namespace MajSimai
         public float Bpm { get; }
         public float HSpeed { get; }
         public int SoflanGroup { get; }
+        public int SlideSoflanGroup { get; }
         public string RawContent { get; }
         public int RawTextPositionX { get; }
         public int RawTextPositionY { get; }
         public int RawTextPosition { get; }
 
         public SimaiRawTimingPoint(double timing, ReadOnlySpan<char> rawContent, int textPosX = 0, int textPosY = 0, float bpm = 0f,
-            float hspeed = 1f, int textPos = 0, int soflanGroup = 0)
+            float hspeed = 1f, int textPos = 0, int soflanGroup = 0, int? slideSoflanGroup = null)
         {
             Timing = timing;
             RawTextPositionX = textPosX;
@@ -66,6 +67,7 @@ namespace MajSimai
             Bpm = bpm;
             HSpeed = hspeed;
             SoflanGroup = soflanGroup;
+            SlideSoflanGroup = slideSoflanGroup ?? soflanGroup;
         }
 
         static bool IsFixedSoflanModifierSpacingValid(ReadOnlySpan<char> rawContent)
@@ -141,7 +143,20 @@ namespace MajSimai
         }
         public SimaiTimingPoint Parse()
         {
-            var notes = SimaiNoteParser.GetNotes(Timing, Bpm, RawContent, SoflanGroup);
+            if (SlideSoflanGroup != SoflanGroup && (RawContent.Contains('/') || RawContent.Contains('`')))
+            {
+                throw new InvalidSimaiSyntaxException(RawTextPositionY, RawTextPositionX, RawContent,
+                    "A head-only HS group cannot be combined with each or fake-each notes");
+            }
+
+            var notes = SimaiNoteParser.GetNotes(Timing, Bpm, RawContent, SoflanGroup, SlideSoflanGroup);
+
+            if (SlideSoflanGroup != SoflanGroup &&
+                (notes.Length == 0 || notes.Any(note => note.Type != SimaiNoteType.Slide)))
+            {
+                throw new InvalidSimaiSyntaxException(RawTextPositionY, RawTextPositionX, RawContent,
+                    "A head-only HS group must be followed by a slide body");
+            }
 
             return new SimaiTimingPoint(Timing, notes, RawContent, RawTextPositionX, RawTextPositionY, Bpm, HSpeed, RawTextPosition, soflanGroup: SoflanGroup);
         }

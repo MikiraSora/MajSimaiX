@@ -43,6 +43,7 @@ head. Same-head branches remain independent. A connected Slide is one
 ## Soflan And Statistics
 
 - Missing group means group `0` and emits no `#` unless FixedSoflan is set.
+- Slide star-head records use `SoflanGroup`; Slide/Wifi body records use `SlideSoflanGroup`. They are normally equal, but `<HSg>(1)-3[...]` assigns only the star head to group `g` and leaves the body in group `0`.
 - `#F` means group `0` with the default fixed speed.
 - `#12F600` means group `12` with fixed speed `600`.
 - Mine does not create a new MA2 note ID.

@@ -74,10 +74,13 @@ MajSimai is an interpreter for [Simai](https://w.atwiki.jp/simai/), written in [
   - [x] Global `<HS*float>`
   - [x] SV compatibility `<SV*float>` (normalized to group 0 HSpeed)
   - [x] Grouped `<HSg*float>` and `<HSg>(...)`
+  - [x] Whole-Slide group scope `<HSg>(1-3[duration])` (star head and body)
+  - [x] Slide star-head-only group scope `<HSg>(1)-3[duration]` (body stays in group 0)
   - [x] Auto grouped `<HS?*float>(...)`
   - [x] Interpolation `<HS*float[duration]easing>` and `<HSg*float[duration]easing>`
   - [x] Per-segment chained interpolation `<HS*float[duration]easing~float[duration]easing>`
   - [x] Instantaneous chain segments `<HS*float[#0]~float[duration]>`
+  - [ ] HS declarations embedded inside a Slide path (unsupported)
 - [ ] EOF flag `E`
 
 ## Getting Started
@@ -137,6 +140,11 @@ dotnet publish -c release /p:PublishAot=false /p:GeneratePackageOnBuild=false -f
 MajSimai is AOT and Trim compatible.
 
 If you want to compile native library, you need to specify the use of AOT.
+
+The native ABI example and compatibility guarantee below are x64-only. On x64,
+`UnmanagedSimaiNote.slideSoflanGroup` reuses existing pointer-alignment padding,
+so the structure remains 64 bytes and the existing `rawContent` pointer offset
+is unchanged. A 32-bit native ABI is not guaranteed to remain binary-compatible.
 
 ```bash
 dotnet publish -c release /p:PublishAot=true -f net9.0 -r linux-x64

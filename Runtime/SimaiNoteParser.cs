@@ -13,16 +13,19 @@ namespace MajSimai
     using zString = ReadOnlySpan<char>;
     internal static class SimaiNoteParser
     {
-        internal static SimaiNote[] GetNotes(double timing, double bpm, string noteContent, int soflanGroup = 0)
+        internal static SimaiNote[] GetNotes(double timing, double bpm, string noteContent, int soflanGroup = 0,
+                                             int? slideSoflanGroup = null)
         {
             var simaiNotes = new List<SimaiNote>();
             GetNotes(timing, bpm, noteContent, simaiNotes);
 
-            if (soflanGroup != 0)
+            var resolvedSlideSoflanGroup = slideSoflanGroup ?? soflanGroup;
+            for (var i = 0; i < simaiNotes.Count; i++)
             {
-                for (var i = 0; i < simaiNotes.Count; i++)
+                simaiNotes[i].SoflanGroup = soflanGroup;
+                if (simaiNotes[i].Type == SimaiNoteType.Slide)
                 {
-                    simaiNotes[i].SoflanGroup = soflanGroup;
+                    simaiNotes[i].SlideSoflanGroup = resolvedSlideSoflanGroup;
                 }
             }
 

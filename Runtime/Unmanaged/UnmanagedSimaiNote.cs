@@ -29,6 +29,8 @@ internal unsafe struct UnmanagedSimaiNote
     public bool isMineSlide;
     public int soflanGroup;
     public int rawContentLen;
+    // Reuse the 64-bit pointer-alignment padding to preserve the existing ABI layout.
+    public int slideSoflanGroup;
 
     public char* rawContent;
 

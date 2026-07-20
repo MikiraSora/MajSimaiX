@@ -1,4 +1,6 @@
 using MajSimai;
+using MajSimai.Unmanaged;
+using System.Text.Json;
 
 var tests = new (string Name, Action Body)[]
 {
@@ -14,7 +16,8 @@ var tests = new (string Name, Action Body)[]
     ("HS/SV invalid forms", InvalidSvForms),
     ("SV numeric parity with instantaneous HS", NumericParity),
     ("lowercase c normalization", LowercaseCNormalization),
-    ("existing HS forms remain usable", ExistingHsForms)
+    ("existing HS forms remain usable", ExistingHsForms),
+    ("slide head-only HS scope", SlideHeadOnlyHsScope)
 };
 
 var failures = 0;
@@ -253,6 +256,114 @@ static void ExistingHsForms()
 
     var fake = Parse("(120){128}1`2,");
     Expect(fake.NoteTimings.ToArray().Count(point => !point.IsEmpty) == 2, "baseline fake-each count changed");
+}
+
+static void SlideHeadOnlyHsScope()
+{
+    var exactHeadOnly = FindNote(Parse("(120){4}<HS44>(1)-2[4:1]V35[5:1],"), "1-2[4:1]V35[5:1]", 0);
+    Expect(exactHeadOnly.Notes.Length == 1, "the requested head-only HS Slide did not remain one note");
+    Expect(exactHeadOnly.Notes[0].SoflanGroup == 44, "the requested Slide star lost group 44");
+    Expect(exactHeadOnly.Notes[0].SlideSoflanGroup == 0,
+        "the requested Slide body was incorrectly assigned to group 44");
+
+    var exactWhole = FindNote(Parse("(120){4}<HS45*2.5>(1-2[4:1]),"), "1-2[4:1]", 0);
+    Expect(exactWhole.Notes[0].SoflanGroup == 45 && exactWhole.Notes[0].SlideSoflanGroup == 45,
+        "whole-Slide HS scope did not assign group 45 to both star and body");
+
+    var headOnly = FindNote(Parse("(120){4}<HS44*2>(1)-3[4:1]V57[5:1],"), "1-3[4:1]V57[5:1]", 0);
+    Expect(headOnly.Notes.Length == 1, "head-only HS slide did not remain one note");
+    Expect(headOnly.Notes[0].Type == SimaiNoteType.Slide, "head-only HS slide changed note type");
+    Expect(headOnly.Notes[0].SoflanGroup == 44, "head-only HS slide star lost its group");
+    Expect(headOnly.Notes[0].SlideSoflanGroup == 0, "head-only HS slide body inherited the star group");
+
+    var wholeSlide = FindNote(Parse("(120){4}<HS45*2>(1-3[4:1]V57[5:1]),"), "1-3[4:1]V57[5:1]", 0);
+    Expect(wholeSlide.Notes.Length == 1, "whole-scope HS slide did not remain one note");
+    Expect(wholeSlide.Notes[0].SoflanGroup == 45, "whole-scope HS slide star lost its group");
+    Expect(wholeSlide.Notes[0].SlideSoflanGroup == 45, "whole-scope HS slide body lost its group");
+
+    var spaced = FindNote(Parse("(120){4}<HS46*2>(1) -3[4:1],"), "1-3[4:1]", 0);
+    Expect(spaced.Notes[0].SoflanGroup == 46 && spaced.Notes[0].SlideSoflanGroup == 0,
+        "whitespace changed head-only HS slide groups");
+
+    var fixedHead = FindNote(Parse("(120){4}<HS46*2>(1@) -3[4:1],"), "1@-3[4:1]", 0);
+    Expect(fixedHead.Notes[0].IsFixedSoflan && fixedHead.Notes[0].SlideSoflanGroup == 0,
+        "whitespace broke bare FixedSoflan on a head-only HS slide");
+
+    var auto = FindNote(Parse("(120){4}<HS?*2>(1)-3[4:1],"), "1-3[4:1]", 0);
+    Expect(auto.Notes[0].SoflanGroup < 0 && auto.Notes[0].SlideSoflanGroup == 0,
+        "auto head-only HS slide body inherited the generated group");
+
+    var sameHead = FindNote(Parse("(120){4}<HS47*2>(1)-3[4:1]*-5[4:1],"), "1-3[4:1]*-5[4:1]", 0);
+    Expect(sameHead.Notes.Length == 2 && sameHead.Notes.All(note => note.Type == SimaiNoteType.Slide),
+        "head-only HS same-head slide did not preserve both branches");
+    Expect(sameHead.Notes.All(note => note.SoflanGroup == 47 && note.SlideSoflanGroup == 0),
+        "head-only HS same-head slide groups were inconsistent");
+
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}<HS48*2>(1)-,",
+        "incomplete head-only HS slide was accepted");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}<HS48*2>(1)-3[4:1]",
+        "head-only HS slide without a trailing comma was silently dropped");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}<HS48*2>(1-3[4:1])-5[4:1],",
+        "partially scoped connected slide was accepted");
+    var priorScopedNote = Parse("(120){4}<HS48*2>(1,2)-4[4:1],");
+    var priorTap = FindNote(priorScopedNote, "1", 0);
+    var scopedSlide = FindNote(priorScopedNote, "2-4[4:1]", 0.5);
+    Expect(priorTap.Notes[0].SoflanGroup == 48,
+        "a prior comma-separated note lost its HS scope group");
+    Expect(scopedSlide.Notes[0].SoflanGroup == 48 && scopedSlide.Notes[0].SlideSoflanGroup == 0,
+        "a comma-separated head-only Slide did not split its body group");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}<HS48*2>(1,)-3[4:1],",
+        "an empty trailing slot in a head-only HS scope was accepted");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}<HS48*2>(1)-{8},2-4[8:1],",
+        "unfinished head-only HS slide leaked across a beat declaration");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}<HS48*2>(1)-3[4:1]`1-5[4:1],",
+        "head-only HS slide accepted fake-each continuation");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}1-<HS44*2>(2)-3[4:1],",
+        "HS inside an unfinished Slide path was silently split into another note");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}1-<HS44>(2[4:1])V<HS30>(35[5:1]),",
+        "the documented embedded-HS Slide form was accepted");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}1-3[4:1]V<HS30*2>(35[5:1]),",
+        "HS between connected Slide segments was accepted");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}1-3[4:1]*<HS30*2>(5[5:1]),",
+        "HS after an incomplete same-head Slide branch was accepted");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}1-3[4:1]`<HS30*2>(5[5:1]),",
+        "HS after an incomplete fake-each Slide branch was accepted");
+
+    var completeBeforeSpeed = Parse("(120){4}1-3[4:1]<HS*2>,");
+    Expect(FindNote(completeBeforeSpeed, "1-3[4:1]", 0).Notes[0].Type == SimaiNoteType.Slide,
+        "HS after a complete Slide was mistaken for an in-path declaration");
+
+    var consecutiveGroups = Parse("(120){4}<HS1*2>(1)<HS2*3>(2),");
+    Expect(FindNote(consecutiveGroups, "1", 0).SoflanGroup == 1,
+        "first consecutive HS group was parsed as a slide mark");
+    Expect(FindNote(consecutiveGroups, "2", 0).SoflanGroup == 2,
+        "second consecutive HS group was parsed as a slide mark");
+
+    var legacySlide = new SimaiNote { Type = SimaiNoteType.Slide, SoflanGroup = 49 };
+    Expect(legacySlide.SlideSoflanGroup == 49,
+        "an unset SlideSoflanGroup did not inherit SoflanGroup");
+    var legacyJsonSlide = JsonSerializer.Deserialize<SimaiNote>("{\"Type\":1,\"SoflanGroup\":49}")!;
+    Expect(legacyJsonSlide.SlideSoflanGroup == 49,
+        "a legacy JSON Slide without SlideSoflanGroup did not inherit SoflanGroup");
+    var explicitJsonSlide = JsonSerializer.Deserialize<SimaiNote>("{\"Type\":1,\"SoflanGroup\":49,\"SlideSoflanGroup\":0}")!;
+    Expect(explicitJsonSlide.SlideSoflanGroup == 0,
+        "an explicit JSON SlideSoflanGroup=0 was not preserved");
+
+    if (IntPtr.Size == 8)
+    {
+        unsafe
+        {
+            var unmanagedNote = new UnmanagedSimaiNote();
+            var baseAddress = (byte*)&unmanagedNote;
+            Expect(sizeof(UnmanagedSimaiNote) == 64, "UnmanagedSimaiNote x64 size changed");
+            Expect((byte*)&unmanagedNote.rawContentLen - baseAddress == 48,
+                "UnmanagedSimaiNote rawContentLen ABI offset changed");
+            Expect((byte*)&unmanagedNote.slideSoflanGroup - baseAddress == 52,
+                "UnmanagedSimaiNote slideSoflanGroup did not use x64 alignment padding");
+            Expect((byte*)&unmanagedNote.rawContent - baseAddress == 56,
+                "UnmanagedSimaiNote rawContent ABI offset changed");
+        }
+    }
 }
 
 static void ExpectThrows<T>(string fumen, string message) where T : Exception

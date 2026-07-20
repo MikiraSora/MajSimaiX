@@ -578,6 +578,26 @@ namespace MajSimai
 
                 return isTapOrHoldOrSlide || isTouchOrTouchHold;
             }
+            static bool IsSlideMark(char c)
+            {
+                switch (c)
+                {
+                    case '-':
+                    case '^':
+                    case 'v':
+                    case '<':
+                    case '>':
+                    case 'V':
+                    case 'p':
+                    case 'q':
+                    case 's':
+                    case 'z':
+                    case 'w':
+                        return true;
+                    default:
+                        return false;
+                }
+            }
             if (fumen.IsEmpty)
             {
                 return new SimaiChart(level, designer, string.Empty, null);
@@ -604,6 +624,8 @@ namespace MajSimai
             var nextAutoGroupNum = -1; // <HS?*> 未定义组号变速组的下一个内部负数标号
             var currentSoflanGroup = 0; // 当前音符所属变速组
             var insideHsGroup = false; // 是否在 <HSg>(...) 的括号内
+            int? pendingSlideHeadSoflanGroup = null;
+            int? pendingSlideSoflanGroup = null;
             double time = 0; //in seconds
             var beats = 4f; //{4}
             var haveNote = false;
@@ -633,6 +655,56 @@ namespace MajSimai
                 xCount = offset - lastLineOffsetBase;
             }
 
+            bool isSingleSlideHead(ReadOnlySpan<char> rawContent)
+            {
+                var normalized = new SimaiRawTimingPoint(time, rawContent, bpm: bpm).RawContent;
+                if (normalized.Contains('/') || normalized.Contains('`') ||
+                    normalized.Contains('[') || normalized.Contains(']'))
+                {
+                    return false;
+                }
+
+                var notes = SimaiNoteParser.GetNotes(time, bpm, normalized);
+                return notes.Length == 1 && notes[0].Type == SimaiNoteType.Tap;
+            }
+
+            static bool hasUnfinishedSlidePath(ReadOnlySpan<char> rawContent)
+            {
+                rawContent = rawContent.Trim();
+                if (rawContent.IsEmpty)
+                {
+                    return false;
+                }
+                if (rawContent[^1] == '*' || rawContent[^1] == '/' || rawContent[^1] == '`')
+                {
+                    return true;
+                }
+
+                var lastSlideMarkIndex = -1;
+                var lastDurationEndIndex = -1;
+                for (var i = 0; i < rawContent.Length; i++)
+                {
+                    if (IsSlideMark(rawContent[i]))
+                    {
+                        lastSlideMarkIndex = i;
+                    }
+                    else if (rawContent[i] == ']')
+                    {
+                        lastDurationEndIndex = i;
+                    }
+                }
+
+                return lastSlideMarkIndex >= 0 && lastDurationEndIndex < lastSlideMarkIndex;
+            }
+
+            void throwIncompleteHeadOnlySlide(int textPos)
+            {
+                getTextPosition(textPos, out var xCount, out var yCount);
+                var content = noteContentBuffer.AsSpan(0, noteContentBufIndex).ToString();
+                throw new InvalidSimaiSyntaxException(yCount, xCount, content,
+                    "A head-only HS group must be followed immediately by a complete slide body");
+            }
+
             int nextTimingOrder() => timingOrder++;
 
             void addRawTiming(double timing,
@@ -643,10 +715,12 @@ namespace MajSimai
                               float hspeed,
                               int textPos,
                               int soflanGroup,
-                              int order)
+                              int order,
+                              int? slideSoflanGroup = null)
             {
                 rawTimingEntries.Add(new RawTimingEntry(
-                    new SimaiRawTimingPoint(timing, rawContent, textPosX, textPosY, rawBpm, hspeed, textPos, soflanGroup),
+                    new SimaiRawTimingPoint(timing, rawContent, textPosX, textPosY, rawBpm, hspeed, textPos, soflanGroup,
+                                            slideSoflanGroup),
                     order));
             }
 
@@ -835,6 +909,12 @@ namespace MajSimai
             {
                 var noteContent = (ReadOnlySpan<char>)noteContentBuffer.AsSpan(0, noteContentBufIndex);
                 var fakeEachTagCount = noteContent.Count('`');
+                var noteSoflanGroup = pendingSlideHeadSoflanGroup ?? currentSoflanGroup;
+                var slideSoflanGroup = pendingSlideSoflanGroup;
+                if (pendingSlideHeadSoflanGroup.HasValue && fakeEachTagCount != 0)
+                {
+                    throwIncompleteHeadOnlySlide(textPos);
+                }
                 if (fakeEachTagCount != 0)
                 {
                     var rentedBufferForRanges = ArrayPool<Range>.Shared.Rent(fakeEachTagCount + 1);
@@ -844,14 +924,15 @@ namespace MajSimai
                         var tagCount = noteContent.Split(ranges, '`', StringSplitOptions.RemoveEmptyEntries);
                         var fakeTime = time;
                         var timeInterval = 1.875 / bpm;
-                        var fakeHSpeed = currentSoflanGroup != 0
-                            ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var fghs) ? fghs : 1f)
+                        var fakeHSpeed = noteSoflanGroup != 0
+                            ? (hsGroupSpeeds.TryGetValue(noteSoflanGroup, out var fghs) ? fghs : 1f)
                             : curHSpeed;
                         for (var j = 0; j < tagCount; j++)
                         {
                             var fakeEachGroup = noteContent[ranges[j]];
                             getTextPosition(textPos, out var xCount, out var yCount);
-                            addRawTiming(fakeTime, fakeEachGroup, xCount, yCount, bpm, fakeHSpeed, textPos, currentSoflanGroup, nextTimingOrder());
+                            addRawTiming(fakeTime, fakeEachGroup, xCount, yCount, bpm, fakeHSpeed, textPos,
+                                         noteSoflanGroup, nextTimingOrder(), slideSoflanGroup);
                             fakeTime += timeInterval;
                         }
                     }
@@ -862,15 +943,18 @@ namespace MajSimai
                 }
                 else
                 {
-                    var noteHSpeed = currentSoflanGroup != 0
-                        ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var nghs) ? nghs : 1f)
+                    var noteHSpeed = noteSoflanGroup != 0
+                        ? (hsGroupSpeeds.TryGetValue(noteSoflanGroup, out var nghs) ? nghs : 1f)
                         : curHSpeed;
                     getTextPosition(textPos, out var xCount, out var yCount);
-                    addRawTiming(time, noteContent, xCount, yCount, bpm, noteHSpeed, textPos, currentSoflanGroup, nextTimingOrder());
+                    addRawTiming(time, noteContent, xCount, yCount, bpm, noteHSpeed, textPos, noteSoflanGroup,
+                                 nextTimingOrder(), slideSoflanGroup);
                 }
 
                 haveNote = false;
                 noteContentBufIndex = 0;
+                pendingSlideHeadSoflanGroup = null;
+                pendingSlideSoflanGroup = null;
             }
 
             /// Xcount| 1 2 3 4 5 6 7 8 9 10| 
@@ -939,6 +1023,10 @@ namespace MajSimai
                             continue;
                         case '(': //Get bpm
                             {
+                                if (pendingSlideHeadSoflanGroup.HasValue)
+                                {
+                                    throwIncompleteHeadOnlySlide(i);
+                                }
                                 haveNote = false;
                                 //noteTemp = "";
                                 noteContentBufIndex = 0;
@@ -974,6 +1062,10 @@ namespace MajSimai
                             continue;
                         case '{'://Get beats
                             {
+                                if (pendingSlideHeadSoflanGroup.HasValue)
+                                {
+                                    throwIncompleteHeadOnlySlide(i);
+                                }
                                 haveNote = false;
                                 //noteTemp = "";
                                 noteContentBufIndex = 0;
@@ -1042,6 +1134,16 @@ namespace MajSimai
                                 }
                                 if (haveNote)
                                 {
+                                    var pendingNoteContent =
+                                        (ReadOnlySpan<char>)noteContentBuffer.AsSpan(0, noteContentBufIndex);
+                                    if (hasUnfinishedSlidePath(pendingNoteContent))
+                                    {
+                                        getTextPosition(i, out var slideXcount, out var slideYcount);
+                                        throw new InvalidSimaiSyntaxException(slideYcount, slideXcount,
+                                            pendingNoteContent.ToString(),
+                                            "HS/SV declarations inside a Slide path are not supported");
+                                    }
+
                                     addPendingNoteBeforeHSpeed(i);
                                 }
                                 haveNote = false;
@@ -1367,6 +1469,32 @@ namespace MajSimai
                         case ')' when insideHsGroup:
                             {
                                 // Exit HS group mode
+                                var nextIndex = i + 1;
+                                while (nextIndex < fumen.Length && char.IsWhiteSpace(fumen[nextIndex]))
+                                {
+                                    nextIndex++;
+                                }
+
+                                var nextIsSpeedTag = nextIndex < fumen.Length && fumen[nextIndex] == '<' &&
+                                                     (IsHSpeedTagStart(fumen, nextIndex) || IsSVTagStart(fumen, nextIndex));
+                                if (nextIndex < fumen.Length && IsSlideMark(fumen[nextIndex]) && !nextIsSpeedTag)
+                                {
+                                    var headContent = (ReadOnlySpan<char>)noteContentBuffer.AsSpan(0, noteContentBufIndex);
+                                    if (!haveNote || !isSingleSlideHead(headContent))
+                                    {
+                                        getTextPosition(i, out var headXcount, out var headYcount);
+                                        throw new InvalidSimaiSyntaxException(headYcount, headXcount, headContent.ToString(),
+                                            "Only one Tap or Star head may appear before a Slide body outside the HS group scope");
+                                    }
+
+                                    pendingSlideHeadSoflanGroup = currentSoflanGroup;
+                                    pendingSlideSoflanGroup = 0;
+                                    insideHsGroup = false;
+                                    currentSoflanGroup = 0;
+                                    i = nextIndex - 1;
+                                    continue;
+                                }
+
                                 if (haveNote)
                                 {
                                     var noteContent = (ReadOnlySpan<char>)(noteContentBuffer.AsSpan(0, noteContentBufIndex));
@@ -1399,6 +1527,12 @@ namespace MajSimai
                         {
                             var noteContent = (ReadOnlySpan<char>)(noteContentBuffer.AsSpan(0, noteContentBufIndex));
                             var fakeEachTagCount = noteContent.Count('`');
+                            var noteSoflanGroup = pendingSlideHeadSoflanGroup ?? currentSoflanGroup;
+                            var slideSoflanGroup = pendingSlideSoflanGroup;
+                            if (pendingSlideHeadSoflanGroup.HasValue && fakeEachTagCount != 0)
+                            {
+                                throwIncompleteHeadOnlySlide(i);
+                            }
 
                             if (fakeEachTagCount != 0)
                             {
@@ -1411,15 +1545,16 @@ namespace MajSimai
                                     var fakeTime = time;
                                     var timeInterval = 1.875 / bpm; // 128分音
 
-                                    var fakeHSpeed = currentSoflanGroup != 0
-                                        ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var fghs) ? fghs : 1f)
+                                    var fakeHSpeed = noteSoflanGroup != 0
+                                        ? (hsGroupSpeeds.TryGetValue(noteSoflanGroup, out var fghs) ? fghs : 1f)
                                         : curHSpeed;
                                     for (var j = 0; j < tagCount; j++)
                                     {
                                         var fakeEachGroup = noteContent[ranges[j]];
                                         //Console.WriteLine(fakeEachGroup.ToString());
                                         getTextPosition(i, out var Xcount, out var Ycount);
-                                        addRawTiming(fakeTime, fakeEachGroup, Xcount, Ycount, bpm, fakeHSpeed, i, currentSoflanGroup, nextTimingOrder());
+                                        addRawTiming(fakeTime, fakeEachGroup, Xcount, Ycount, bpm, fakeHSpeed, i,
+                                                     noteSoflanGroup, nextTimingOrder(), slideSoflanGroup);
                                         fakeTime += timeInterval;
                                     }
                                 }
@@ -1430,16 +1565,23 @@ namespace MajSimai
                             }
                             else
                             {
-                                var noteHSpeed = currentSoflanGroup != 0
-                                    ? (hsGroupSpeeds.TryGetValue(currentSoflanGroup, out var nghs) ? nghs : 1f)
+                                var noteHSpeed = noteSoflanGroup != 0
+                                    ? (hsGroupSpeeds.TryGetValue(noteSoflanGroup, out var nghs) ? nghs : 1f)
                                     : curHSpeed;
                                 getTextPosition(i, out var Xcount, out var Ycount);
-                                addRawTiming(time, noteContent, Xcount, Ycount, bpm, noteHSpeed, i, currentSoflanGroup, nextTimingOrder());
+                                addRawTiming(time, noteContent, Xcount, Ycount, bpm, noteHSpeed, i, noteSoflanGroup,
+                                             nextTimingOrder(), slideSoflanGroup);
                             }
                             //Console.WriteLine("Note:" + noteTemp);
 
                             //noteTemp = "";
                             noteContentBufIndex = 0;
+                            pendingSlideHeadSoflanGroup = null;
+                            pendingSlideSoflanGroup = null;
+                        }
+                        if (pendingSlideHeadSoflanGroup.HasValue)
+                        {
+                            throwIncompleteHeadOnlySlide(i);
                         }
                         {
                             BufferHelper.EnsureBufferLength(commaTimingBufIndex + 1, ref commaTimingBuffer);
@@ -1457,6 +1599,10 @@ namespace MajSimai
                         BufferHelper.EnsureBufferLength(noteContentBufIndex + 1, ref noteContentBuffer);
                         noteContentBuffer[noteContentBufIndex++] = curChar;
                     }
+                }
+                if (pendingSlideHeadSoflanGroup.HasValue)
+                {
+                    throwIncompleteHeadOnlySlide(fumen.Length);
                 }
                 BufferHelper.EnsureBufferLength(commaTimingBufIndex + 1, ref commaTimingBuffer);
                 getTextPosition(fumen.Length, out var endXcount, out var endYcount);
@@ -1483,7 +1629,8 @@ namespace MajSimai
                                                         rawTiming.Bpm,
                                                         finalHSpeed,
                                                         rawTiming.RawTextPosition,
-                                                        rawTiming.SoflanGroup);
+                                                        rawTiming.SoflanGroup,
+                                                        rawTiming.SlideSoflanGroup);
                     try
                     {
                         var timingPoint = rawTiming.Parse();
