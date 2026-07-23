@@ -109,6 +109,7 @@ namespace MajSimai
             {
                 ArrayPool<SimaiTimingPoint>.Shared.Return(buffer);
             }
+            ForceYellowNormalizer.ClearNaturalEachHeadFlags(_noteTimings);
             _fumen = fumen;
             _isEmpty = _noteTimings.Length == 0;
         }

@@ -113,15 +113,19 @@ starting from the top (1 = top, going clockwise: 2, 3, 4, 5 = bottom,
 | `1b` | Break tap. |
 | `1x` | EX tap. |
 | `1m` | Mine. |
+| `1y` | Force Yellow appearance; does not create a logical EACH. |
 | `1$` | Force star (creates a star without a slide). |
 | `1$$` | Force star with fake rotation. |
 | `1bx` | Break + EX (flags combine). |
 
-Flags are detected by scanning the note token left-to-right. They can appear
-in any order after the position digit and combine freely:
+Flags are detected by scanning the note token left-to-right. Subject to the
+type-specific and conflict rules below, they can appear in any order after the
+position digit:
 - `b` — break
 - `x` — EX
 - `m` — mine
+- `y` — Force Yellow appearance (MajSimaiX extension; incompatible with `b`
+  and `m` on the same note or Slide branch)
 - `f` — hanabi (touch only)
 - `$` — force star (`$$` = fake rotation)
 
@@ -133,6 +137,8 @@ in any order after the position digit and combine freely:
 1h[#2.5]      hold for 2.5 seconds (absolute)
 1h[120#4:1]   hold with custom BPM 120
 1bh / 1hb     break hold
+1yh / 1hy     Force Yellow short hold
+1yh[4:1]      Force Yellow hold
 ```
 
 - `h` marks a hold. A duration in `[...]` is optional.
@@ -151,6 +157,8 @@ Basic forms:
 1>5[4:1]              curve-right slide 1→5
 1-3[8:1]*-5[8:1]      same-head: 1→3 then 1→5 (see parser notes)
 1>5[4:1]-8[8:1]       conn slide: 1→5 then 5→8
+1y-4[8:3]             Force Yellow star head only
+1-4y[8:3]             Force Yellow Slide path only
 ```
 
 - A slide mark is one of: `- ^ v < > V p q s z w`
@@ -177,6 +185,7 @@ B1f     touch with hanabi (firework) flag
 B1b     break touch
 B1m     mine touch
 B1x     EX touch
+B1y     Force Yellow touch
 C       centre touch
 ```
 
@@ -188,9 +197,57 @@ B1h        touch hold, short form (0 duration)
 B1hf[4:1]  touch hold with hanabi
 B1hb[4:1]  break touch hold
 B1hx[4:1]  EX touch hold
+B1yh[4:1]  Force Yellow touch hold
 ```
 
 - Same flag set as touch, plus `h` for hold and `[duration]`.
+
+### Force Yellow (`y`)
+
+Lowercase `y` is a MajSimaiX visual modifier. It selects the same yellow
+appearance used by a natural EACH, but it does not create an EACH pair, line,
+sound, judgement, score event, or `TTM_EACHPAIRS` entry.
+
+Header examples:
+
+```text
+1y                 Tap
+1xy / 1yx          EX + Force Yellow
+1y$ / 1$y          Force Star + Force Yellow
+1yh[4:1]           Hold
+B1fy               Hanabi Touch
+Cyh[4:1]           centre TouchHold
+1y-3[8:1]          Slide star head only
+1y!-3[8:1]         stored on a hidden head; no visible path effect
+```
+
+For a Slide or Wifi path, place `y` either after that segment's endpoint and
+before its duration, or after the segment's closing `]`:
+
+```text
+1-3y[8:1]              segment 0 is yellow (canonical form)
+1-3[8:1]y              equivalent suffix form
+1-3y[8:1]-5[8:1]       only segment 0 is yellow
+1-3[8:1]-5y[8:1]       only segment 1 is yellow
+1!-3y[8:1]             no-head Slide with a yellow path
+```
+
+Rules:
+
+- Header `y` and path `y` are independent. `1y!-3[8:1]` does not color the
+  no-head path; write `1!-3y[8:1]` for that.
+- In a connected Slide, each path `y` applies only to its own segment. Wifi is
+  one segment.
+- `y` may coexist with `x`, `f`, `$` / `$$`, and FixedSoflan `@`. When `@` is
+  used, write `y` before `@`; the text after `@` is only the optional speed.
+- `y` cannot coexist with `b` or `m`. For a Slide, this conflict covers the
+  visible head and all connected segments in one parsed branch. `/` notes and
+  same-head `*` branches are checked independently.
+- A component may contain only one `y`. Thus `1yy`, `1-3yy[8:1]`, and
+  `1-3y[8:1]y` are invalid, while `1y-3y[8:1]` is valid.
+- `-y3`, `y1`, an isolated `y`, and uppercase `Y` are invalid.
+- If a header belongs to a natural EACH group, MajSimaiX clears its redundant
+  Force Yellow header flag. Slide path flags remain unchanged.
 
 ### Each notes
 
@@ -201,6 +258,9 @@ Notes separated by `/` are played simultaneously (same timing):
 1/2/3      three simultaneous taps
 1h[4:1]/2  hold 1 and tap 2 simultaneously
 ```
+
+Natural EACH detection is based on actual note timing, not only the `/`
+spelling. It remains separate from the visual-only `y` modifier.
 
 ### Shorthand tap pair
 

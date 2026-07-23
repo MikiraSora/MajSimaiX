@@ -1515,6 +1515,14 @@ namespace MajSimai
                         haveNote = true;
                         noteContentBufIndex = 0;
                     }
+                    else if (!haveNote && (fumen[i] == 'y' || fumen[i] == 'Y'))
+                    {
+                        getTextPosition(i, out var Xcount, out var Ycount);
+                        var message = fumen[i] == 'Y'
+                            ? "Unexpected character \"Y\""
+                            : "Invalid Force Yellow modifier position";
+                        throw new InvalidSimaiSyntaxException(Ycount, Xcount, fumen[i].ToString(), message);
+                    }
                     else if (!haveNote && fumen[i] == '@')
                     {
                         getTextPosition(i, out var Xcount, out var Ycount);

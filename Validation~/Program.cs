@@ -17,7 +17,12 @@ var tests = new (string Name, Action Body)[]
     ("SV numeric parity with instantaneous HS", NumericParity),
     ("lowercase c normalization", LowercaseCNormalization),
     ("existing HS forms remain usable", ExistingHsForms),
-    ("slide head-only HS scope", SlideHeadOnlyHsScope)
+    ("slide head-only HS scope", SlideHeadOnlyHsScope),
+    ("Force Yellow basic modifiers", ForceYellowBasicModifiers),
+    ("Force Yellow slide segments", ForceYellowSlideSegments),
+    ("Force Yellow natural each normalization", ForceYellowNaturalEach),
+    ("Force Yellow invalid forms", InvalidForceYellowForms),
+    ("Force Yellow managed JSON defaults", ForceYellowJsonDefaults)
 };
 
 var failures = 0;
@@ -364,6 +369,169 @@ static void SlideHeadOnlyHsScope()
                 "UnmanagedSimaiNote rawContent ABI offset changed");
         }
     }
+}
+
+static void ForceYellowBasicModifiers()
+{
+    var tap = ParseSingleNote("1y");
+    Expect(tap.IsForceYellow && tap.RawContent == "1", "Force Yellow Tap was not normalized");
+
+    var ex = ParseSingleNote("1xy");
+    Expect(ex.IsForceYellow && ex.IsEx && ex.RawContent == "1", "Force Yellow EX Tap flags changed");
+    var reverseEx = ParseSingleNote("1yx");
+    Expect(reverseEx.IsForceYellow && reverseEx.IsEx, "Force Yellow/EX order was not accepted");
+
+    var hold = ParseSingleNote("1yh[4:1]");
+    var reverseHold = ParseSingleNote("1hy[4:1]");
+    Expect(hold.IsForceYellow && hold.Type == SimaiNoteType.Hold && hold.RawContent == "1h[4:1]",
+        "Force Yellow Hold was not normalized");
+    Expect(reverseHold.IsForceYellow && reverseHold.Type == SimaiNoteType.Hold,
+        "Force Yellow/Hold order was not accepted");
+
+    var touch = ParseSingleNote("B1fy");
+    var touchHold = ParseSingleNote("Cyh[4:1]");
+    Expect(touch.IsForceYellow && touch.IsHanabi && touch.Type == SimaiNoteType.Touch,
+        "Force Yellow Touch flags changed");
+    Expect(touchHold.IsForceYellow && touchHold.Type == SimaiNoteType.TouchHold,
+        "Force Yellow TouchHold was not parsed");
+
+    var forceStar = ParseSingleNote("1$y");
+    var fakeRotate = ParseSingleNote("1y$$");
+    Expect(forceStar.IsForceYellow && forceStar.IsForceStar, "Force Yellow Force Star was not parsed");
+    Expect(fakeRotate.IsForceYellow && fakeRotate.IsForceStar && fakeRotate.IsFakeRotate,
+        "Force Yellow fake-rotation star was not parsed");
+
+    var fixedTap = ParseSingleNote("1y@600");
+    var fixedSlide = ParseSingleNote("1y@600-3[8:1]");
+    Expect(fixedTap.IsForceYellow && fixedTap.IsFixedSoflan && fixedTap.HasFixedSoflanSpeed,
+        "Force Yellow FixedSoflan Tap changed");
+    Expect(fixedSlide.IsForceYellow && fixedSlide.IsFixedSoflan && fixedSlide.Type == SimaiNoteType.Slide,
+        "Force Yellow FixedSoflan Slide changed");
+
+    var noHeadBefore = ParseSingleNote("1y!-3[8:1]");
+    var noHeadAfter = ParseSingleNote("1!y-3[8:1]");
+    Expect(noHeadBefore.IsForceYellow && noHeadBefore.IsSlideNoHead && noHeadBefore.ForceYellowSlideSegmentIndices.Length == 0,
+        "Force Yellow before no-head marker changed scope");
+    Expect(noHeadAfter.IsForceYellow && noHeadAfter.IsSlideNoHead && noHeadAfter.ForceYellowSlideSegmentIndices.Length == 0,
+        "Force Yellow after no-head marker changed scope");
+}
+
+static void ForceYellowSlideSegments()
+{
+    var beforeDuration = ParseSingleNote("1-3y[8:1]");
+    var afterDuration = ParseSingleNote("1-3[8:1]y");
+    Expect(!beforeDuration.IsForceYellow && beforeDuration.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }),
+        "pre-duration Force Yellow segment index was wrong");
+    Expect(afterDuration.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }),
+        "post-duration Force Yellow segment index was wrong");
+    Expect(beforeDuration.RawContent == "1-3[8:1]" && afterDuration.RawContent == "1-3[8:1]",
+        "Force Yellow remained in Slide RawContent");
+
+    var firstOnly = ParseSingleNote("1-3y[8:1]-5[8:1]");
+    var secondOnly = ParseSingleNote("1-3[8:1]-5y[8:1]");
+    var both = ParseSingleNote("1-3[8:1]y-5y[8:1]");
+    var sharedDuration = ParseSingleNote("1-3y-5[8:1]");
+    Expect(firstOnly.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }),
+        "first connected Slide segment index was wrong");
+    Expect(secondOnly.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 1 }),
+        "second connected Slide segment index was wrong");
+    Expect(both.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0, 1 }),
+        "connected Slide did not retain both segment indices");
+    Expect(sharedDuration.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }),
+        "shared-duration connected Slide segment index was wrong");
+
+    var bigV = ParseSingleNote("1V35y[8:1]");
+    var wifi = ParseSingleNote("1w5[8:1]y");
+    Expect(bigV.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }), "big-V Force Yellow was not parsed");
+    Expect(wifi.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }), "Wifi Force Yellow was not parsed");
+
+    var noHeadTrack = ParseSingleNote("1!-3y[8:1]");
+    Expect(!noHeadTrack.IsForceYellow && noHeadTrack.IsSlideNoHead &&
+           noHeadTrack.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }),
+        "no-head Force Yellow track changed scope");
+
+    var sameHeadChart = Parse("(120){4}1y-3[8:1]*-5y[8:1],");
+    var sameHeadPoint = FindNote(sameHeadChart, "1y-3[8:1]*-5y[8:1]", 0);
+    Expect(sameHeadPoint.Notes.Length == 2, "same-head Force Yellow branch count changed");
+    Expect(sameHeadPoint.Notes[0].IsForceYellow && sameHeadPoint.Notes[0].ForceYellowSlideSegmentIndices.Length == 0,
+        "same-head visible branch Force Yellow was wrong");
+    Expect(sameHeadPoint.Notes[1].IsSlideNoHead &&
+           sameHeadPoint.Notes[1].ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }),
+        "same-head no-head branch Force Yellow segment was wrong");
+
+    var independentBreakBranch = Parse("(120){4}1y-3[8:1]*-5b[8:1],");
+    Expect(FindNote(independentBreakBranch, "1y-3[8:1]*-5b[8:1]", 0).Notes.Length == 2,
+        "independent same-head Break branch conflicted with Force Yellow");
+}
+
+static void ForceYellowNaturalEach()
+{
+    var slash = FindNote(Parse("(120){4}1y/2,"), "1y/2", 0);
+    Expect(slash.Notes.Length == 2 && slash.Notes.All(note => !note.IsForceYellow),
+        "natural each did not clear Force Yellow heads");
+
+    var slideEach = FindNote(Parse("(120){4}1y-3y[8:1]/2,"), "1y-3y[8:1]/2", 0);
+    var slide = slideEach.Notes.Single(note => note.Type == SimaiNoteType.Slide);
+    Expect(!slide.IsForceYellow && slide.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0 }),
+        "natural each cleared the Force Yellow Slide track or retained the head");
+
+    var excludedMine = FindNote(Parse("(120){4}1y/2m,"), "1y/2m", 0);
+    Expect(excludedMine.Notes.Single(note => !note.IsMine).IsForceYellow,
+        "Mine incorrectly caused natural-each Force Yellow clearing");
+
+    var excludedNoHead = FindNote(Parse("(120){4}1y!-3[8:1]/2,"), "1y!-3[8:1]/2", 0);
+    Expect(excludedNoHead.Notes.Single(note => note.IsSlideNoHead).IsForceYellow,
+        "no-head Slide incorrectly lost its hidden-head Force Yellow flag");
+
+    var fakeCollision = Parse("(120){128}1`2y,3,");
+    var second = FindNote(fakeCollision, "2y", 1.875 / 120d).Notes[0];
+    Expect(!second.IsForceYellow, "same-time notes from separate timing points did not clear Force Yellow");
+}
+
+static void InvalidForceYellowForms()
+{
+    var invalid = new[]
+    {
+        "1yb", "1by", "1ym", "1my",
+        "1y-3b[8:1]", "1b-3y[8:1]", "1-3y[8:1]-5b[8:1]",
+        "1yy", "1-3yy[8:1]", "1-3y[8:1]y",
+        "Y1", "1Y", "y1", "1-y3[8:1]", "1h[4:1]y", "1-3[8:y1]",
+        "1@y600", "1y@600!-3[8:1]", "1y-3", "1yh[bad]"
+    };
+
+    foreach (var note in invalid)
+    {
+        ExpectThrows<InvalidSimaiSyntaxException>($"(120){{4}}{note},", $"expected Force Yellow rejection for {note}");
+    }
+}
+
+static void ForceYellowJsonDefaults()
+{
+    var legacy = JsonSerializer.Deserialize<SimaiNote>("{\"Type\":0}")!;
+    Expect(!legacy.IsForceYellow, "legacy JSON defaulted IsForceYellow to true");
+    Expect(legacy.ForceYellowSlideSegmentIndices is not null && legacy.ForceYellowSlideSegmentIndices.Length == 0,
+        "legacy JSON did not default ForceYellowSlideSegmentIndices to an empty array");
+
+    var explicitValue = JsonSerializer.Deserialize<SimaiNote>(
+        "{\"Type\":1,\"IsForceYellow\":true,\"ForceYellowSlideSegmentIndices\":[0,2]}")!;
+    Expect(explicitValue.IsForceYellow && explicitValue.ForceYellowSlideSegmentIndices.SequenceEqual(new[] { 0, 2 }),
+        "managed JSON did not preserve Force Yellow fields");
+
+    var nullValue = JsonSerializer.Deserialize<SimaiNote>(
+        "{\"Type\":1,\"ForceYellowSlideSegmentIndices\":null}")!;
+    Expect(nullValue.ForceYellowSlideSegmentIndices.Length == 0,
+        "managed JSON null did not normalize ForceYellowSlideSegmentIndices");
+}
+
+static SimaiNote ParseSingleNote(string noteContent)
+{
+    var chart = Parse($"(120){{4}}{noteContent},");
+    var notes = chart.NoteTimings.ToArray()
+        .Where(point => !point.IsEmpty)
+        .SelectMany(point => point.Notes)
+        .ToArray();
+    Expect(notes.Length == 1, $"expected one parsed note for {noteContent}, found {notes.Length}");
+    return notes[0];
 }
 
 static void ExpectThrows<T>(string fumen, string message) where T : Exception

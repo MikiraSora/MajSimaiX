@@ -299,7 +299,63 @@ TouchHold, Slide body, Wifi body, or EachLine.
 
 ---
 
-## 7. Differences from standard simai
+## 7. Force Yellow (`y`)
+
+`y` is a MajSimaiX per-component appearance extension. It does not participate
+in logical EACH analysis. The base syntax and examples are in
+`simai-syntax.md`; this section defines the parser and data-model contract.
+
+### 7.1 Component scope
+
+- A header `y` applies to a Tap, Hold, Touch, TouchHold, Force Star, or Slide
+  star head. It must appear after the note identity and before the first Slide
+  mark or Hold duration.
+- For a Slide segment, `y` may appear after the endpoint before `[...]`, or
+  immediately after that segment's `]`. Both forms set the same segment index.
+- Connected Slide indices are zero-based in source order. A Wifi path is one
+  segment. Same-head `*` branches are separate `SimaiNote` instances and each
+  starts at segment index 0.
+- Header and path scope never spread into one another. A no-head Slide may keep
+  `IsForceYellow = true` for its hidden head, but only an index in
+  `ForceYellowSlideSegmentIndices` colors its path.
+
+### 7.2 Conflicts and normalization
+
+- `y` is compatible with `x`, `f`, `$` / `$$`, and `@`.
+- `y` is incompatible with `b` and `m`. On a Slide, the conflict boundary is
+  the complete parsed branch: a flag on the head conflicts with one on any
+  connected segment and vice versa. `/` notes and `*` branches remain
+  independent.
+- Duplicate `y` on one header or one segment is a syntax error. Uppercase `Y`
+  and ambiguous positions such as `-y3` are also errors.
+- After all actual timings are known, a natural EACH group uses the same
+  `1e-9` timing tolerance and candidate rules as MajdataEdit's
+  `EachNoteAnalysis`. MajSimaiX clears `IsForceYellow` from its eligible heads;
+  it does not clear Slide segment indices.
+- `RawContent` contains the structural note after all `y` characters have been
+  removed. The original `SimaiChart.Fumen` remains unchanged.
+
+### 7.3 Managed data contract
+
+```csharp
+public bool IsForceYellow { get; set; }
+public int[] ForceYellowSlideSegmentIndices { get; set; } = Array.Empty<int>();
+```
+
+The segment array is empty for non-Slides and unmodified paths. Non-empty
+indices must be strictly increasing, unique, non-negative, and smaller than
+the parsed path count. Missing or explicit `null` values in legacy managed JSON
+normalize to an empty array; missing `IsForceYellow` defaults to `false`.
+
+The existing `MajSimai_Parse` native ABI deliberately remains unchanged and
+does not expose either field. Native consumers need a future versioned API for
+complete head and per-segment support. MajdataView rendering is also outside
+the current parser contract; adding fields to managed JSON alone does not make
+an older runtime display them.
+
+---
+
+## 8. Differences from standard simai
 
 MajSimaiX is broadly compatible with standard simai but adds extensions and
 omits a few features. When in doubt, use MajSimaiX syntax.
@@ -310,6 +366,7 @@ omits a few features. When in doubt, use MajSimaiX syntax.
 |---------|--------|
 | HS / Soflan | `<HS...>`, `<HSg...>`, `<HSg>(...)` |
 | FixedSoflan | `@`, `@speed` |
+| Force Yellow | `y` on a note header or Slide path segment |
 | Force star | `1$` |
 | Fake rotation | `1$$` |
 | No-head slide | `1!-3[8:1]`, `1?-3[8:1]` |
@@ -342,14 +399,16 @@ omits a few features. When in doubt, use MajSimaiX syntax.
 
 ---
 
-## 8. Source file index
+## 9. Source file index
 
 | File | Responsibility |
 |------|----------------|
 | `Runtime/SimaiParser.cs` | File/metadata parsing, chart timing loop, `<HS>` tags, group scope, interpolation, comma/fake-each timing. |
-| `Runtime/SimaiNoteParser.cs` | Note-level parsing: flags, holds, slides, same-head, touch, FixedSoflan `@`. |
+| `Runtime/SimaiNoteParser.cs` | Note-level parsing: flags, holds, slides, same-head, touch, FixedSoflan `@`, and Force Yellow `y`. |
+| `Runtime/ForceYellowModifierParser.cs` | Component-level `y` parsing, conflict detection, normalization, and Slide segment indices. |
+| `Runtime/ForceYellowNormalizer.cs` | Clears redundant header flags from natural EACH groups after timing resolution. |
 | `Runtime/SimaiRawTimingPoint.cs` | Raw timing content, FixedSoflan `@` whitespace validation, `SoflanGroup` / `SlideSoflanGroup` propagation. |
-| `Runtime/SimaiNote.cs` | Note data model (type, position, flags, `SoflanGroup` / `SlideSoflanGroup`, FixedSoflan fields). |
+| `Runtime/SimaiNote.cs` | Note data model, including managed Force Yellow fields. |
 | `Runtime/SimaiTimingPoint.cs` | Timing point data model (timing, BPM, HSpeed, SoflanGroup, notes). |
 | `Runtime/SimaiMetadata.cs` | Metadata data model (title, artist, offset, designers, levels, fumens, commands). |
 | `HS_Soflan_Reference.md` | Full HS/Soflan and FixedSoflan reference with runtime support matrix. |

@@ -177,9 +177,18 @@ namespace MajSimai
                 throw new InvalidSimaiSyntaxException(0, 0, noteText.ToString(), "Invalid FixedSoflan modifier");
             }
 
-            Span<char> noteTextCopy = stackalloc char[baseNoteText.Length];
-            baseNoteText.CopyTo(noteTextCopy);
-            var detectResult = NoteHelper.NoteFlag.Detect(baseNoteText, noteTextCopy);
+            var forceYellowResult = new ForceYellowParseResult(string.Empty, false, Array.Empty<int>());
+            var normalizedNoteText = baseNoteText;
+            if (baseNoteText.IndexOf('y') >= 0 || baseNoteText.IndexOf('Y') >= 0)
+            {
+                forceYellowResult = ForceYellowModifierParser.Parse(baseNoteText);
+                normalizedNoteText = forceYellowResult.NoteContent.AsSpan();
+            }
+            var hasForceYellow = forceYellowResult.IsForceYellow || forceYellowResult.SlideSegmentIndices.Length != 0;
+            var forceYellowContent = hasForceYellow ? noteText.ToString() : string.Empty;
+            Span<char> noteTextCopy = stackalloc char[normalizedNoteText.Length];
+            normalizedNoteText.CopyTo(noteTextCopy);
+            var detectResult = NoteHelper.NoteFlag.Detect(normalizedNoteText, noteTextCopy);
             noteTextCopy = detectResult.NoteContent;
 
             var simaiNote = new SimaiNote();
@@ -191,7 +200,7 @@ namespace MajSimai
                 {
                     if(noteTextCopy.Length < 2)
                     {
-                        return false;
+                        return FailInvalidNote();
                     }
                     else if(int.TryParse(noteTextCopy.Slice(1, 1), out var startPosition))
                     {
@@ -199,7 +208,7 @@ namespace MajSimai
                     }
                     else
                     {
-                        return false;
+                        return FailInvalidNote();
                     }
                 }
                 else 
@@ -216,7 +225,7 @@ namespace MajSimai
                 }
                 else
                 {
-                    return false;
+                    return FailInvalidNote();
                 }
                 simaiNote.Type = SimaiNoteType.Tap; //if nothing happen in following if
             }
@@ -234,6 +243,10 @@ namespace MajSimai
                     }
                     else
                     {
+                        if (hasForceYellow && noteTextCopy.Contains('['))
+                        {
+                            return FailInvalidNote();
+                        }
                         simaiNote.HoldTime = 0;
                     }
                     //Console.WriteLine("Hold:" +simaiNote.touchArea+ simaiNote.startPosition + " TimeLastFor:" + simaiNote.holdTime);
@@ -253,6 +266,10 @@ namespace MajSimai
                         }
                         else
                         {
+                            if (hasForceYellow && noteTextCopy.Contains('['))
+                            {
+                                return FailInvalidNote();
+                            }
                             simaiNote.HoldTime = 0;
                         }
                     }
@@ -271,7 +288,7 @@ namespace MajSimai
                 simaiNote.Type = SimaiNoteType.Slide;
                 if(!NoteHelper.TryGetSlideParams(bpm, noteTextCopy, out var slideParams))
                 {
-                    return false;
+                    return FailInvalidNote();
                 }
                 var (slideWaitTime, slideTime) = slideParams;
                 simaiNote.SlideTime = slideTime;
@@ -304,12 +321,24 @@ namespace MajSimai
             simaiNote.IsMine = detectResult.IsMine;
             simaiNote.IsMineSlide = detectResult.IsMineSlide;
 
+            simaiNote.IsForceYellow = forceYellowResult.IsForceYellow;
+            simaiNote.ForceYellowSlideSegmentIndices = forceYellowResult.SlideSegmentIndices;
+
             simaiNote.IsFixedSoflan = isFixedSoflan;
             simaiNote.HasFixedSoflanSpeed = hasFixedSoflanSpeed;
             simaiNote.FixedSoflanSpeed = fixedSoflanSpeed;
             simaiNote.RawContent = new string(noteTextCopy.Trim());
             outSimaiNote = simaiNote;
             return true;
+
+            bool FailInvalidNote()
+            {
+                if (hasForceYellow)
+                {
+                    throw new InvalidSimaiSyntaxException(0, 0, forceYellowContent, "Invalid Force Yellow note syntax");
+                }
+                return false;
+            }
         }
 
         static bool TryParseFixedSoflanModifier(zString noteText,

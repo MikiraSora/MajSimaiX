@@ -17,6 +17,13 @@ namespace MajSimai
         public bool IsSlideNoHead { get; set; }
         public bool IsMine { get; set; } //炸弹音符
         public bool IsMineSlide { get; set; }
+        public bool IsForceYellow { get; set; }
+        private int[] _forceYellowSlideSegmentIndices = System.Array.Empty<int>();
+        public int[] ForceYellowSlideSegmentIndices
+        {
+            get => _forceYellowSlideSegmentIndices;
+            set => _forceYellowSlideSegmentIndices = value ?? System.Array.Empty<int>();
+        }
         public int SoflanGroup { get; set; } = 0; //变速分组
         private int? _slideSoflanGroup;
         public int SlideSoflanGroup //Slide轨迹变速分组；未单独指定时继承星头分组

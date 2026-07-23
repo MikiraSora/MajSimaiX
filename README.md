@@ -20,6 +20,7 @@ MajSimai is an interpreter for [Simai](https://w.atwiki.jp/simai/), written in [
   - [x] Break flag `1b`
   - [x] EX flag `1x`
   - [x] Mine flag `1m`
+  - [x] Force Yellow appearance flag `1y`
   - [x] Force star flag `1$`
     - [x] Fake rotation `1$$`
 - [x] Hold `1h[duration]`
@@ -68,6 +69,12 @@ MajSimai is an interpreter for [Simai](https://w.atwiki.jp/simai/), written in [
     - [x] Common `[int:int]`
     - [x] With absolute time `[#float]`
     - [x] With custom BPM `[float#int:int]`
+- [x] Force Yellow appearance modifier `y`
+  - [x] Tap, Hold, Touch, TouchHold, Force Star, and Slide/Wifi heads
+  - [x] Per-segment Slide/Wifi paths: `1-3y[8:1]` or `1-3[8:1]y`
+  - [x] Connected Slide paths: `1-3y[8:1]-5[8:1]`
+  - [x] No-head Slide paths: `1!-3y[8:1]`
+  - [x] Managed model fields `IsForceYellow` and `ForceYellowSlideSegmentIndices`
 - [x] Each note `note/note`
   - [x] Fake each ``1`2`3`4,``
 - [x] HSpeed / Soflan
@@ -108,6 +115,13 @@ var fumen = "(197){8}1,1,1,1,1,1,1,1,2b,3h,4-1[8:1],";
 var simaiChart = await SimaiParser.ParseChartAsync(fumen);
 
 ```
+
+Force Yellow is a visual-only MajSimaiX extension. A header `y` is exposed as
+`SimaiNote.IsForceYellow`; Slide path modifiers are exposed as zero-based,
+strictly increasing `SimaiNote.ForceYellowSlideSegmentIndices`. The parser
+removes `y` from `RawContent`. Natural EACH groups clear the redundant header
+flag, but never clear Slide path indices. The existing native ABI does not
+expose these two managed-only fields.
 
 ## Build
 
