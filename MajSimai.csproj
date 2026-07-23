@@ -22,12 +22,15 @@
 
   <ItemGroup>
     <Compile Remove="bin\**" />
+    <Compile Remove="Build~\**" />
     <Compile Remove="obj\**" />
     <Compile Remove="Validation~\**" />
     <EmbeddedResource Remove="bin\**" />
+    <EmbeddedResource Remove="Build~\**" />
     <EmbeddedResource Remove="obj\**" />
     <EmbeddedResource Remove="Validation~\**" />
     <None Remove="bin\**" />
+    <None Remove="Build~\**" />
     <None Remove="obj\**" />
     <None Remove="Validation~\**" />
   </ItemGroup>
