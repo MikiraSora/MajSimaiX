@@ -22,12 +22,68 @@ namespace MajSimai
 
         public SimaiTimingPoint(double timing, SimaiNote[]? notes, string content, int textPosX = 0, int textPosY = 0, float bpm = 0f,
             float hspeed = 1f, int rawTextPosition = 0, int signatureNumerator = 0, int signatureDenominator = 0, int soflanGroup = 0)
+            : this(timing,
+                   notes,
+                   content,
+                   textPosX,
+                   textPosY,
+                   bpm,
+                   hspeed,
+                   rawTextPosition,
+                   signatureNumerator,
+                   signatureDenominator,
+                   soflanGroup,
+                   false)
+        {
+        }
+
+        private SimaiTimingPoint(double timing, SimaiNote[]? notes, string? content, int textPosX, int textPosY, float bpm,
+            float hspeed, int rawTextPosition, int signatureNumerator, int signatureDenominator, int soflanGroup,
+            bool contentIsNormalized)
         {
             Timing = timing;
             RawTextPositionX = textPosX;
             RawTextPositionY = textPosY;
             RawTextPosition = rawTextPosition;
             SoflanGroup = soflanGroup;
+            RawContent = contentIsNormalized ? content ?? string.Empty : NormalizeRawContent(content);
+            Bpm = bpm;
+            HSpeed = hspeed;
+            if (notes != null)
+            {
+                Notes = notes;
+            }
+
+            SignatureNumerator = signatureNumerator;
+            SignatureDenominator = signatureDenominator;
+        }
+
+        internal static SimaiTimingPoint CreateFromNormalizedContent(double timing,
+                                                                      SimaiNote[]? notes,
+                                                                      string normalizedContent,
+                                                                      int textPosX,
+                                                                      int textPosY,
+                                                                      float bpm,
+                                                                      float hspeed,
+                                                                      int rawTextPosition,
+                                                                      int soflanGroup)
+        {
+            return new SimaiTimingPoint(timing,
+                                        notes,
+                                        normalizedContent,
+                                        textPosX,
+                                        textPosY,
+                                        bpm,
+                                        hspeed,
+                                        rawTextPosition,
+                                        0,
+                                        0,
+                                        soflanGroup,
+                                        true);
+        }
+
+        static string NormalizeRawContent(string? content)
+        {
             if (!string.IsNullOrWhiteSpace(content))
             {
                 var rawContent = content.AsSpan();
@@ -49,26 +105,13 @@ namespace MajSimai
                 var newRaw = rCSpan.Slice(0, i2);
                 if (newRaw != rawContent)
                 {
-                    RawContent = new string(rCSpan.Slice(0, i2));
+                    return new string(rCSpan.Slice(0, i2));
                 }
-                else
-                {
-                    RawContent = rawContent.ToString();
-                }
-            }
-            else
-            {
-                RawContent = string.Empty;
-            }
-            Bpm = bpm;
-            HSpeed = hspeed;
-            if (notes != null)
-            {
-                Notes = notes;
+
+                return rawContent.ToString();
             }
 
-            SignatureNumerator = signatureNumerator;
-            SignatureDenominator = signatureDenominator;
+            return string.Empty;
         }
 #if NET7_0_OR_GREATER
         internal unsafe MajSimai.Unmanaged.UnmanagedSimaiTimingPoint ToUnmanaged()

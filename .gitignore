@@ -233,6 +233,11 @@ _pkginfo.txt
 ClientBin/
 ~$*
 *~
+
+# Unity ignores directories ending in '~'. Keep the benchmark sources tracked.
+!Benchmark~/
+!Benchmark~/*.cs
+!Benchmark~/*.csproj
 *.dbmdl
 *.dbproj.schemaview
 *.jfm

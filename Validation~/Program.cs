@@ -1,11 +1,14 @@
 using MajSimai;
 using MajSimai.Unmanaged;
+using System.Text;
 using System.Text.Json;
 
 var tests = new (string Name, Action Body)[]
 {
     ("ordinary baseline", OrdinaryBaseline),
+    ("multiline text positions", MultilineTextPositions),
     ("SV persistence and explicit restore", SvPersistence),
+    ("dense SV sweep boundaries", DenseSvSweepBoundaries),
     ("SV-only empty timing and comma speed", SvOnlyTiming),
     ("same-slot HS/SV last declaration", SameSlotLastDeclaration),
     ("HS0 shares group zero", Hs0SharesGroupZero),
@@ -16,6 +19,7 @@ var tests = new (string Name, Action Body)[]
     ("HS/SV invalid forms", InvalidSvForms),
     ("SV numeric parity with instantaneous HS", NumericParity),
     ("lowercase c normalization", LowercaseCNormalization),
+    ("RawContent normalization parity", RawContentNormalizationParity),
     ("existing HS forms remain usable", ExistingHsForms),
     ("slide head-only HS scope", SlideHeadOnlyHsScope),
     ("Force Yellow basic modifiers", ForceYellowBasicModifiers),
@@ -76,6 +80,34 @@ static void OrdinaryBaseline()
     Expect(chart.CommaTimings.ToArray().All(point => NearlyEqual(point.HSpeed, 1f)), "comma HSpeed changed");
 }
 
+static void MultilineTextPositions()
+{
+    const string fumen = "(120){4}\n1,\r\n2,\n3,";
+    var chart = Parse(fumen);
+    var timingPoints = chart.NoteTimings.ToArray()
+        .Concat(chart.CommaTimings.ToArray())
+        .ToArray();
+
+    foreach (var timingPoint in timingPoints)
+    {
+        var expectedLine = 1;
+        var expectedLineOffsetBase = 0;
+        for (var i = 0; i < fumen.Length; i++)
+        {
+            if (fumen[i] == '\n' && i <= timingPoint.RawTextPosition)
+            {
+                expectedLine++;
+                expectedLineOffsetBase = i;
+            }
+        }
+
+        Expect(timingPoint.RawTextPositionY == expectedLine,
+            $"line mismatch at offset {timingPoint.RawTextPosition}: {timingPoint.RawTextPositionY} != {expectedLine}");
+        Expect(timingPoint.RawTextPositionX == timingPoint.RawTextPosition - expectedLineOffsetBase,
+            $"column mismatch at offset {timingPoint.RawTextPosition}");
+    }
+}
+
 static void SvPersistence()
 {
     var chart = Parse("(120){4}<SV*2>1,2,<SV*1>3,");
@@ -87,6 +119,42 @@ static void SvPersistence()
     Expect(NearlyEqual(third.HSpeed, 1f), "SV*1 did not restore group zero");
     Expect(NearlyEqual(FindEmpty(chart, 0).HSpeed, 2f), "SV event point has wrong speed");
     Expect(NearlyEqual(FindEmpty(chart, 1).HSpeed, 1f), "restore event point has wrong speed");
+}
+
+static void DenseSvSweepBoundaries()
+{
+    const int timingCount = 256;
+    var builder = new StringBuilder("(180){4}");
+    for (var i = 0; i < timingCount; i++)
+    {
+        var hSpeed = (i % 3) switch
+        {
+            0 => "0.5",
+            1 => "2",
+            _ => "-1"
+        };
+        builder.Append("<SV*")
+               .Append(hSpeed)
+               .Append('>')
+               .Append((char)('1' + i % 8))
+               .Append(',');
+    }
+
+    var noteTimings = Parse(builder.ToString()).NoteTimings.ToArray()
+        .Where(point => !point.IsEmpty)
+        .ToArray();
+    Expect(noteTimings.Length == timingCount, $"dense SV note count was {noteTimings.Length}");
+    for (var i = 0; i < noteTimings.Length; i++)
+    {
+        var expected = (i % 3) switch
+        {
+            0 => 0.5f,
+            1 => 2f,
+            _ => -1f
+        };
+        Expect(NearlyEqual(noteTimings[i].HSpeed, expected),
+            $"dense SV speed mismatch at timing {i}: {noteTimings[i].HSpeed} != {expected}");
+    }
 }
 
 static void SvOnlyTiming()
@@ -244,6 +312,27 @@ static void LowercaseCNormalization()
 
     var centre = FindNote(Parse("(120){4}C,"), "C", 0);
     Expect(centre.Notes.Length == 1 && centre.Notes[0].TouchArea == 'C', "uppercase C centre touch changed");
+}
+
+static void RawContentNormalizationParity()
+{
+    var chart = Parse("(120){4}1c \t/ \u30002c,\n3c@600-5[8:1] \r,");
+    var noteTimings = chart.NoteTimings.ToArray()
+        .Where(point => !point.IsEmpty)
+        .ToArray();
+    Expect(noteTimings.Length == 2, $"normalized RawContent timing count was {noteTimings.Length}");
+    Expect(noteTimings[0].RawContent == "1/2", $"each RawContent was '{noteTimings[0].RawContent}'");
+    Expect(noteTimings[0].Notes.Select(note => note.RawContent).SequenceEqual(new[] { "1", "2" }),
+        "each note RawContent changed during normalized string reuse");
+    Expect(noteTimings[1].RawContent == "3@600-5[8:1]",
+        $"FixedSoflan RawContent was '{noteTimings[1].RawContent}'");
+    Expect(noteTimings[1].Notes.Length == 1 && noteTimings[1].Notes[0].IsFixedSoflan,
+        "FixedSoflan flag changed during normalized string reuse");
+
+    var publicTiming = new SimaiTimingPoint(0, null, " \t1\n ");
+    Expect(publicTiming.RawContent == "1", "public SimaiTimingPoint constructor stopped normalizing content");
+    ExpectThrows<InvalidSimaiSyntaxException>("(120){4}1@ 600,",
+        "FixedSoflan whitespace validation was bypassed");
 }
 
 static void ExistingHsForms()

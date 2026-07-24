@@ -70,6 +70,33 @@ namespace MajSimai
             SlideSoflanGroup = slideSoflanGroup ?? soflanGroup;
         }
 
+        private SimaiRawTimingPoint(double timing, string normalizedContent, int textPosX, int textPosY, float bpm,
+            float hspeed, int textPos, int soflanGroup, int slideSoflanGroup)
+        {
+            Timing = timing;
+            RawTextPositionX = textPosX;
+            RawTextPositionY = textPosY;
+            RawTextPosition = textPos;
+            RawContent = normalizedContent;
+            Bpm = bpm;
+            HSpeed = hspeed;
+            SoflanGroup = soflanGroup;
+            SlideSoflanGroup = slideSoflanGroup;
+        }
+
+        public SimaiRawTimingPoint WithHSpeed(float hspeed)
+        {
+            return new SimaiRawTimingPoint(Timing,
+                                           RawContent,
+                                           RawTextPositionX,
+                                           RawTextPositionY,
+                                           Bpm,
+                                           hspeed,
+                                           RawTextPosition,
+                                           SoflanGroup,
+                                           SlideSoflanGroup);
+        }
+
         static bool IsFixedSoflanModifierSpacingValid(ReadOnlySpan<char> rawContent)
         {
             for (var i = 0; i < rawContent.Length; i++)
@@ -158,7 +185,15 @@ namespace MajSimai
                     "A head-only HS group must be followed by a slide body");
             }
 
-            return new SimaiTimingPoint(Timing, notes, RawContent, RawTextPositionX, RawTextPositionY, Bpm, HSpeed, RawTextPosition, soflanGroup: SoflanGroup);
+            return SimaiTimingPoint.CreateFromNormalizedContent(Timing,
+                                                                notes,
+                                                                RawContent,
+                                                                RawTextPositionX,
+                                                                RawTextPositionY,
+                                                                Bpm,
+                                                                HSpeed,
+                                                                RawTextPosition,
+                                                                SoflanGroup);
         }
         public Task<SimaiTimingPoint> ParseAsync()
         {

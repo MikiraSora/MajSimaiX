@@ -21,14 +21,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Benchmark~\**" />
     <Compile Remove="bin\**" />
     <Compile Remove="Build~\**" />
     <Compile Remove="obj\**" />
     <Compile Remove="Validation~\**" />
+    <EmbeddedResource Remove="Benchmark~\**" />
     <EmbeddedResource Remove="bin\**" />
     <EmbeddedResource Remove="Build~\**" />
     <EmbeddedResource Remove="obj\**" />
     <EmbeddedResource Remove="Validation~\**" />
+    <None Remove="Benchmark~\**" />
     <None Remove="bin\**" />
     <None Remove="Build~\**" />
     <None Remove="obj\**" />

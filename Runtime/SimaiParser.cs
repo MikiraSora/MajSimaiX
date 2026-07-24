@@ -638,21 +638,43 @@ namespace MajSimai
                     cachedLineOffsetList.Add(i);
             }
 
+            var cachedTextPositionOffset = int.MinValue;
+            var cachedLineOffsetIndex = 0;
+            var cachedLineOffsetBase = 0;
             void getTextPosition(int offset, out int xCount, out int yCount)
             {
-                yCount = 1;
-                var lastLineOffsetBase = 0;
-
-                foreach (var curLineOffsetBase in cachedLineOffsetList)
+                if (offset >= cachedTextPositionOffset)
                 {
-                    if (offset < curLineOffsetBase)
-                        break;
+                    while (cachedLineOffsetIndex < cachedLineOffsetList.Count &&
+                           cachedLineOffsetList[cachedLineOffsetIndex] <= offset)
+                    {
+                        cachedLineOffsetBase = cachedLineOffsetList[cachedLineOffsetIndex++];
+                    }
+                }
+                else
+                {
+                    var low = 0;
+                    var high = cachedLineOffsetList.Count;
+                    while (low < high)
+                    {
+                        var middle = low + ((high - low) >> 1);
+                        if (cachedLineOffsetList[middle] <= offset)
+                        {
+                            low = middle + 1;
+                        }
+                        else
+                        {
+                            high = middle;
+                        }
+                    }
 
-                    yCount++;
-                    lastLineOffsetBase = curLineOffsetBase;
+                    cachedLineOffsetIndex = low;
+                    cachedLineOffsetBase = low == 0 ? 0 : cachedLineOffsetList[low - 1];
                 }
 
-                xCount = offset - lastLineOffsetBase;
+                cachedTextPositionOffset = offset;
+                yCount = cachedLineOffsetIndex + 1;
+                xCount = offset - cachedLineOffsetBase;
             }
 
             bool isSingleSlideHead(ReadOnlySpan<char> rawContent)
@@ -1618,6 +1640,7 @@ namespace MajSimai
 
                 var finalHSpeedEvents = BuildFinalHSpeedEvents(hSpeedEvents);
                 var finalRawTimingEntries = BuildFinalRawTimingEntries(rawTimingEntries);
+                var finalHSpeedByTiming = BuildFinalHSpeedByTiming(finalHSpeedEvents, finalRawTimingEntries);
                 var noteTimingPoints = new SimaiTimingPoint[finalRawTimingEntries.Count];
                 InvalidSimaiMarkupException? parseException = null;
                 Parallel.For(0, finalRawTimingEntries.Count, (i, state) =>
@@ -1629,16 +1652,8 @@ namespace MajSimai
                     }
 
                     var rawTiming = finalRawTimingEntries[i].RawTiming;
-                    var finalHSpeed = GetEffectiveHSpeed(finalHSpeedEvents, rawTiming.SoflanGroup, rawTiming.Timing);
-                    rawTiming = new SimaiRawTimingPoint(rawTiming.Timing,
-                                                        rawTiming.RawContent.AsSpan(),
-                                                        rawTiming.RawTextPositionX,
-                                                        rawTiming.RawTextPositionY,
-                                                        rawTiming.Bpm,
-                                                        finalHSpeed,
-                                                        rawTiming.RawTextPosition,
-                                                        rawTiming.SoflanGroup,
-                                                        rawTiming.SlideSoflanGroup);
+                    var finalHSpeed = finalHSpeedByTiming.Length == 0 ? 1f : finalHSpeedByTiming[i];
+                    rawTiming = rawTiming.WithHSpeed(finalHSpeed);
                     try
                     {
                         var timingPoint = rawTiming.Parse();
@@ -2452,6 +2467,36 @@ namespace MajSimai
                 return left.Order.CompareTo(right.Order);
             });
             return finalEvents;
+        }
+
+        static float[] BuildFinalHSpeedByTiming(List<HSpeedEvent> hSpeedEvents, List<RawTimingEntry> rawTimingEntries)
+        {
+            if (hSpeedEvents.Count == 0 || rawTimingEntries.Count == 0)
+            {
+                return Array.Empty<float>();
+            }
+
+            var hSpeedByTiming = new float[rawTimingEntries.Count];
+            var currentHSpeedByGroup = new Dictionary<int, float>();
+            var hSpeedEventIndex = 0;
+
+            for (var i = 0; i < rawTimingEntries.Count; i++)
+            {
+                var timingKey = GetTimeKey(rawTimingEntries[i].RawTiming.Timing);
+                while (hSpeedEventIndex < hSpeedEvents.Count &&
+                       GetTimeKey(hSpeedEvents[hSpeedEventIndex].Timing) <= timingKey)
+                {
+                    var hSpeedEvent = hSpeedEvents[hSpeedEventIndex++];
+                    currentHSpeedByGroup[hSpeedEvent.SoflanGroup] = hSpeedEvent.HSpeed;
+                }
+
+                hSpeedByTiming[i] = currentHSpeedByGroup.TryGetValue(rawTimingEntries[i].RawTiming.SoflanGroup,
+                                                                      out var hSpeed)
+                    ? hSpeed
+                    : 1f;
+            }
+
+            return hSpeedByTiming;
         }
 
         static List<RawTimingEntry> BuildFinalRawTimingEntries(List<RawTimingEntry> rawTimingEntries)
